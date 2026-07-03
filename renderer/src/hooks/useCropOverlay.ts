@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
-import type { CropBounds } from '../types/electron';
+import { useRef, useState } from 'react';
 
 interface DragState {
   startX: number;
@@ -13,16 +12,19 @@ const EMPTY_DRAG: DragState = { startX: 0, startY: 0, currentX: 0, currentY: 0, 
 
 export function useCropOverlay() {
   const [open, setOpen] = useState(false);
+  const [screenshot, setScreenshot] = useState<string | null>(null);
   const [drag, setDrag] = useState<DragState>(EMPTY_DRAG);
   const [confirmed, setConfirmed] = useState(false);
   const overlayRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    // Jack implements Cmd+Shift+S globalShortcut → IPC → renderer
-    window.electronAPI?.onStartCrop?.(() => setOpen(true));
-  }, []);
+  const openWithScreenshot = (base64: string) => {
+    setScreenshot(base64);
+    setDrag(EMPTY_DRAG);
+    setConfirmed(false);
+    setOpen(true);
+  };
 
-  const bounds = (): CropBounds => {
+  const bounds = () => {
     const x = Math.min(drag.startX, drag.currentX);
     const y = Math.min(drag.startY, drag.currentY);
     const w = Math.abs(drag.currentX - drag.startX);
@@ -55,21 +57,36 @@ export function useCropOverlay() {
     setConfirmed(true);
   };
 
-  const confirm = async () => {
-    const screenshot = await window.electronAPI?.startCapture();
-    if (screenshot) {
-      window.electronAPI?.sendCropResult?.(screenshot, bounds());
-    }
-    close();
+  const confirm = async (): Promise<string | null> => {
+    if (!screenshot) return null;
+    const { x, y, w, h } = bounds();
+    const rect = overlayRef.current?.getBoundingClientRect();
+    if (!rect || w < 10 || h < 10) return null;
+
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const scaleX = img.naturalWidth / rect.width;
+        const scaleY = img.naturalHeight / rect.height;
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(w * scaleX);
+        canvas.height = Math.round(h * scaleY);
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(img, x * scaleX, y * scaleY, w * scaleX, h * scaleY, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/png').split(',')[1]);
+      };
+      img.src = `data:image/png;base64,${screenshot}`;
+    });
   };
 
   const close = () => {
     setOpen(false);
     setDrag(EMPTY_DRAG);
     setConfirmed(false);
+    setScreenshot(null);
   };
 
   const hasBounds = bounds().w > 10 && bounds().h > 10;
 
-  return { open, setOpen, overlayRef, drag, boxStyle, onMouseDown, onMouseMove, onMouseUp, confirm, close, hasBounds, confirmed };
+  return { open, openWithScreenshot, screenshot, overlayRef, drag, boxStyle, onMouseDown, onMouseMove, onMouseUp, confirm, close, hasBounds, confirmed };
 }

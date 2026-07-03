@@ -4,7 +4,9 @@ import { Mic, MicOff, Sparkles, Send, Camera } from 'lucide-react';
 import { useTranscript } from './hooks/useTranscript';
 import { useAiOverlay } from './hooks/useAiOverlay';
 import { useAudioRecorder } from './hooks/useAudioRecorder';
+import { useCropOverlay } from './hooks/useCropOverlay';
 import { TranscriptPanel } from './components/TranscriptPanel';
+import { CropOverlay } from './components/CropOverlay';
 import { HotkeyHelp } from './components/HotkeyHelp';
 import { ExportButton } from './components/ExportButton';
 
@@ -16,6 +18,7 @@ function App() {
   const candidateEntries = useTranscript('Speaker 2');
   const ai = useAiOverlay();
   const audio = useAudioRecorder();
+  const crop = useCropOverlay();
 
   // Auto question detection: new Speaker 1 entry with "?" → ask AI
   const prevInterviewerLenRef = useRef(0);
@@ -37,13 +40,11 @@ function App() {
     });
   }, []);
 
-  // Cmd+Shift+S: capture → ask AI
+  // Cmd+Shift+S: screenshot → crop overlay
   useEffect(() => {
     window.electronAPI?.onShortcutSnip(async () => {
       const base64 = await window.electronAPI?.startCapture();
-      if (base64) {
-        ai.ask(`Elemezd ezt a képernyőképet: ${base64}`);
-      }
+      if (base64) crop.openWithScreenshot(base64);
     });
   }, []);
 
@@ -69,8 +70,20 @@ function App() {
     }
   };
 
+  const handleCropOpen = async () => {
+    const base64 = await window.electronAPI?.startCapture();
+    if (base64) crop.openWithScreenshot(base64);
+  };
+
+  const handleCropConfirm = async () => {
+    const cropped = await crop.confirm();
+    crop.close();
+    if (cropped) ai.ask(`Elemezd ezt a képernyőképet: ${cropped}`);
+  };
+
   return (
     <div className="h-screen flex flex-col bg-gray-900 text-white overflow-hidden font-sans">
+      <CropOverlay {...crop} confirm={handleCropConfirm} />
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700 shrink-0 drag">
         <h1 className="text-sm font-semibold text-white tracking-wide">Interview Assistant</h1>
@@ -96,8 +109,8 @@ function App() {
             onChange={(e) => window.electronAPI?.setOpacity(parseFloat(e.target.value))}
           />
           <button
-            onClick={handleScreenshot}
-            title="Screenshot → AI (⌘⇧S)"
+            onClick={handleCropOpen}
+            title="Képkivágás → AI (⌘⇧S)"
             className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg transition-colors font-medium bg-gray-700 hover:bg-gray-600 text-gray-200"
           >
             <Camera size={13} />
