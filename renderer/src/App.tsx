@@ -47,7 +47,7 @@ function App() {
   useEffect(() => {
     window.electronAPI?.onShortcutSnip(async () => {
       const result = await window.electronAPI?.startCropFlow();
-      if (result?.cropped) ai.ask(`Elemezd ezt a képernyőképet: ${result.cropped}`);
+      if (result?.cropped) ai.ask('', result.cropped);
     });
   }, []);
 
@@ -71,18 +71,18 @@ function App() {
 
   const handleScreenshot = async () => {
     const base64 = await captureScreenshot();
-    if (base64) ai.ask(`Elemezd ezt a képernyőképet: ${base64}`);
+    if (base64) ai.ask('', base64);
   };
 
   const handleCropOpen = async () => {
     const result = await window.electronAPI?.startCropFlow();
-    if (result?.cropped) ai.ask(`Elemezd ezt a képernyőképet: ${result.cropped}`);
+    if (result?.cropped) ai.ask('', result.cropped);
   };
 
   const handleCropConfirm = async () => {
     const cropped = await crop.confirm();
     crop.close();
-    if (cropped) ai.ask(`Elemezd ezt a képernyőképet: ${cropped}`);
+    if (cropped) ai.ask('', cropped);
   };
 
   const handleLanguageChange = async (lang: string) => {

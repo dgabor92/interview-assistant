@@ -10,7 +10,7 @@ import fs from 'fs';
 
 const app = express();
 app.use(cors());
-app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.json({ limit: '20mb' }));
 
 // ---------------------------------------------------------------------------
 // LLM setup
@@ -28,8 +28,8 @@ function usesClaude(): boolean {
 
 const anthropic = API_KEY ? new Anthropic({ apiKey: API_KEY }) : null;
 
-type Message = { role: 'user' | 'assistant'; content: string };
-const contextWindow: Message[] = [];
+type TextMessage = { role: 'user' | 'assistant'; content: string };
+const contextWindow: TextMessage[] = [];
 const MAX_CONTEXT = 10;
 
 const SYSTEM_PROMPT = `You are an interview assistant helping a software developer candidate during a technical interview.
@@ -41,16 +41,30 @@ Rules:
 - Keep answers concise and practical — the candidate needs to understand quickly
 - If you see code: always include a corrected or improved code snippet in your answer`;
 
-async function askClaude(prompt: string): Promise<string> {
+async function askClaude(prompt: string, imageBase64?: string): Promise<string> {
   if (!anthropic) throw new Error('No ANTHROPIC_API_KEY set');
-  contextWindow.push({ role: 'user', content: prompt });
+
+  const userContent: Anthropic.MessageParam['content'] = imageBase64
+    ? [
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: imageBase64 } },
+        { type: 'text', text: prompt || 'Elemezd a képernyőképet. Ha kódot látsz, adj működő megoldást.' },
+      ]
+    : prompt;
+
+  // Store only text in context window (vision content not serializable)
+  contextWindow.push({ role: 'user', content: prompt || '[screenshot]' });
   if (contextWindow.length > MAX_CONTEXT) contextWindow.splice(0, contextWindow.length - MAX_CONTEXT);
+
+  const messages: Anthropic.MessageParam[] = [
+    ...contextWindow.slice(0, -1),
+    { role: 'user', content: userContent },
+  ];
 
   const response = await anthropic.messages.create({
     model: 'claude-sonnet-4-6',
-    max_tokens: 1024,
+    max_tokens: 2048,
     system: SYSTEM_PROMPT,
-    messages: contextWindow,
+    messages,
   });
 
   const text = response.content[0].type === 'text' ? response.content[0].text : '';
@@ -101,14 +115,14 @@ let whisperLanguage = process.env.WHISPER_LANGUAGE ?? 'hu';
 // Routes
 // ---------------------------------------------------------------------------
 app.post('/ask', async (req: Request, res: Response) => {
-  const { prompt } = req.body as { prompt: string };
-  if (!prompt?.trim()) {
-    res.status(400).json({ error: 'prompt required' });
+  const { prompt, image } = req.body as { prompt: string; image?: string };
+  if (!prompt?.trim() && !image) {
+    res.status(400).json({ error: 'prompt or image required' });
     return;
   }
 
   try {
-    const result = usesClaude() ? await askClaude(prompt) : await askOllama(prompt);
+    const result = usesClaude() ? await askClaude(prompt ?? '', image) : await askOllama(prompt ?? '');
     res.json({ result, provider: usesClaude() ? 'claude' : 'ollama' });
   } catch (err) {
     console.error('LLM error:', err);
