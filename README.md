@@ -1,99 +1,180 @@
 # Interview Assistant
 
-A macOS Electron overlay that listens to a live interview (mic + system audio), transcribes it in real time with Whisper, and gives an AI (Claude or local Ollama) instant, concise answers — without appearing in screen shares or recordings.
+A real-time interview overlay — listens to both your microphone and system audio, transcribes with Whisper, and gives instant AI (Claude or local Ollama) answers. The window is invisible in screen shares and recordings.
 
 ## How it works
 
 ```
-┌─────────────────────┐      ┌──────────────────────┐      ┌────────────────────────┐
-│  Electron overlay    │      │  Node/Express backend │      │  Python STT server      │
-│  (renderer, Vite/React) │◄──►│  (port 5001)          │◄──►│  faster-whisper          │
-│  always-on-top window   │      │  Claude API / Ollama  │      │  (ports 8765/8766)      │
-└─────────────────────┘      └──────────────────────┘      └────────────────────────┘
+┌──────────────────────┐      ┌──────────────────────┐      ┌─────────────────────────┐
+│  Electron overlay     │      │  Node/Express backend │      │  Python STT server       │
+│  React + Vite UI      │◄──►│  port 5001             │◄──►│  faster-whisper           │
+│  always-on-top window │      │  Claude API / Ollama   │      │  ports 8765/8766/8767   │
+└──────────────────────┘      └──────────────────────┘      └─────────────────────────┘
 ```
 
-- **`electron.js`** — main process: creates the overlay window (`setContentProtection(true)`, hidden from screen capture/recording), handles global hotkeys, screenshot/crop capture, and proxies audio start/stop to the STT server.
-- **`renderer/`** — React + TypeScript + Tailwind UI (the overlay content): transcript panel, AI overlay, crop tool, hotkey help.
-- **`backend/`** — Express server (`server.ts`, port `5001`). Talks to the Claude API (`@anthropic-ai/sdk`, streaming) or falls back to a local Ollama model. Persists transcript history per session in SQLite (`~/.interview-assistant/sessions.db`).
-- **`stt_server.py`** — Python (Flask + `faster-whisper`) speech-to-text server. Captures audio directly via `sounddevice`, does simple energy-based speaker diarization (interviewer vs. candidate), and broadcasts live transcript lines over a WebSocket (port `8765`); start/stop is controlled via HTTP (port `8766`).
+- **`electron.js`** — main process: overlay window (`setContentProtection`), hotkeys, screenshot crop, audio loopback via `setDisplayMediaRequestHandler`
+- **`renderer/src/`** — React + TypeScript + Tailwind UI: transcript, AI panel, crop tool
+- **`backend/`** — Express (port 5001): Claude streaming API or Ollama fallback, SQLite session history
+- **`stt_server.py`** — Python faster-whisper: mic (port 8765/8766) + system audio (port 8767) WebSocket feeds
 
 ## Features
 
-- Always-on-top overlay window that's invisible in screen shares/recordings (macOS content protection)
-- Live transcription of both microphone and system audio, with basic speaker separation
-- AI answers streamed in real time, using the full conversation transcript as context
-- Screenshot + crop tool to send a piece of the screen (e.g. a coding problem) to the AI
-- Switchable LLM provider: Claude API (default, streaming) or local Ollama model
-- Configurable coding language and transcription language at runtime
-- Session history stored locally in SQLite
+- Invisible overlay (invisible in screen shares and recordings on macOS)
+- Live transcription: microphone (YOU) + system audio (INT) with speaker separation
+- AI answers streamed in real time with full conversation context
+- Screenshot + crop tool for sending coding problems to the AI
+- Configurable: coding language, transcript language, company/role context
+- Session history in local SQLite
 
 ### Hotkeys
 
 | Shortcut | Action |
 |---|---|
-| `Cmd+K` | Ask the AI |
-| `Cmd+Shift+S` | Capture & crop a screen area for the AI |
-| `R` | Start/stop audio recording |
+| `Cmd/Ctrl+K` | Focus AI prompt |
+| `Cmd/Ctrl+Shift+S` | Screenshot crop → AI |
 
-## Prerequisites
+---
 
-- macOS (uses Electron content-protection APIs and macOS-specific audio routing)
-- [Node.js](https://nodejs.org/) 18+ and npm
-- Python 3.10+ with `pip3`
-- (Optional, for system audio capture) [BlackHole](https://github.com/ExistentialAudio/BlackHole) + a Multi-Output Device, and [`SwitchAudioSource`](https://github.com/deweller/switchaudio-osx) (`brew install switchaudio-osx`) — `start.sh`/`stop.sh` will auto-switch to it if present and restore your previous output device on exit. Not required on recent macOS versions where `getDisplayMedia` loopback audio is used instead.
-- An [Anthropic API key](https://console.anthropic.com/) (optional — without it, the backend falls back to a local Ollama instance)
+## Installation
 
-## Setup
+### macOS (full support)
+
+**Prerequisites:**
+- Node.js 18+
+- Python 3.10+
+- An Anthropic API key (optional — falls back to Ollama without it)
 
 ```bash
 git clone <this-repo>
 cd interview-assistant
-cp .env.example .env   # then fill in ANTHROPIC_API_KEY (optional)
+cp .env.example .env   # add ANTHROPIC_API_KEY
 ./install.sh
-```
-
-`install.sh` installs the root, `backend`, and `renderer` npm dependencies and the Python requirements (`faster-whisper`, `flask`, `flask-cors`, `websockets`, `numpy`, `sounddevice`).
-
-### Configuration (`.env`)
-
-| Variable | Default | Description |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | — | Claude API key. If unset, the backend uses Ollama instead. |
-| `LLM_PROVIDER` | `auto` | `auto` \| `claude` \| `ollama` — forces a provider regardless of API key presence. |
-| `OLLAMA_URL` | `http://localhost:11434` | Ollama server URL (used when Ollama is the active provider). |
-| `OLLAMA_MODEL` | `codellama:7b-instruct` | Ollama model name. |
-| `WHISPER_LANGUAGE` | `hu` | Whisper transcription language (can also be changed at runtime from the UI). |
-
-## Running
-
-```bash
 ./start.sh
 ```
 
-This starts, in order: the Python STT server, the backend, the Vite dev server, waits for the renderer to be ready, then launches Electron. Press `Ctrl+C` (or run `./stop.sh`) to stop everything cleanly — it kills all spawned processes and restores your previous audio output device.
+**System audio capture** works natively on macOS Sequoia/Tahoe via `getDisplayMedia` loopback — no extra tools needed. When you click the Monitor button, click Share on the dialog (no window/screen selection needed).
+
+On older macOS (Ventura or earlier), install BlackHole for audio routing:
+```bash
+brew install blackhole-2ch
+brew install switchaudio-osx
+```
+Then create a Multi-Output Device in Audio MIDI Setup (BlackHole 2ch + your speakers/headphones).
+
+---
+
+### Linux
+
+**Prerequisites:**
+- Node.js 18+
+- Python 3.10+
+- PulseAudio or PipeWire (standard on most distros)
 
 ```bash
-./stop.sh
+git clone <this-repo>
+cd interview-assistant
+cp .env.example .env
+./install.sh
 ```
 
-Alternatively, for frontend/backend-only development without the STT server or audio switching, `npm start` at the repo root runs backend + renderer + Electron via `concurrently`.
+**System audio capture:** Linux does not support the macOS `getDisplayMedia` loopback. Use PulseAudio/PipeWire virtual sink instead:
+
+```bash
+# PulseAudio
+pactl load-module module-null-sink sink_name=virtual_out
+pactl load-module module-loopback source=virtual_out.monitor
+
+# PipeWire (pw-loopback)
+pw-loopback --capture-props='media.class=Audio/Source/Virtual'
+```
+
+Then select the virtual sink as audio output before clicking Monitor.
+
+**Content protection** (`setContentProtection`) is not available on Linux — the overlay will be visible in screen recordings.
+
+**Start:**
+```bash
+bash start.sh
+```
+
+---
+
+### Windows
+
+**Prerequisites:**
+- Node.js 18+
+- Python 3.10+
+- Windows 10/11
+
+```bash
+git clone <this-repo>
+cd interview-assistant
+cp .env.example .env
+install.sh   # or run npm install manually in root, backend/, renderer/ and pip install -r requirements.txt
+```
+
+**System audio capture:** Windows supports WASAPI loopback natively. In the Share dialog (Monitor button), select a window and check "Share audio" — this captures system audio without extra tools.
+
+**Content protection:** `setContentProtection` is supported on Windows — the overlay is hidden from screen capture.
+
+**Start:**
+```bash
+bash start.sh   # requires Git Bash or WSL
+```
+Or manually:
+```bash
+python stt_server.py &
+npm run dev --prefix backend &
+npm run dev --prefix renderer &
+npx electron .
+```
+
+---
+
+## Configuration (`.env`)
+
+| Variable | Default | Description |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | — | Claude API key. Without it, falls back to Ollama. |
+| `LLM_PROVIDER` | `auto` | `auto` \| `claude` \| `ollama` |
+| `OLLAMA_URL` | `http://localhost:11434` | Ollama server URL |
+| `OLLAMA_MODEL` | `codellama:7b-instruct` | Ollama model name |
+| `WHISPER_LANGUAGE` | `hu` | Transcription language (also changeable at runtime in the UI) |
+| `DEFAULT_CODING_LANGUAGE` | `TypeScript` | Default coding language for AI answers |
 
 ## Project structure
 
 ```
-electron.js          Electron main process (window, hotkeys, IPC, screen capture)
-preload.js            Main window preload (contextBridge API for the renderer)
+electron.js              Electron main process (window, hotkeys, IPC, audio loopback)
+preload.js               Main window contextBridge API
 crop.html / crop-preload.js   Fullscreen screenshot-crop overlay
-backend/              Express API (LLM requests, sessions, transcript persistence)
-renderer/              React/Vite UI
-  src/components/       TranscriptPanel, AiOverlay, CropOverlay, HotkeyHelp, ExportButton
-  src/hooks/             useAudioRecorder, useSystemAudio, useTranscript, useSttStatus, useAiOverlay, useCropOverlay
-stt_server.py         Python Whisper STT server (HTTP control + WebSocket transcript feed)
-start.sh / stop.sh     Orchestration scripts (processes + audio device switching)
-install.sh            One-shot dependency installer
+stt_server.py            Python Whisper STT server (mic + system audio)
+start.sh / stop.sh       Orchestration + audio device switching
+install.sh               One-shot dependency installer
+
+backend/
+  server.ts              App setup + route mounting
+  llm/
+    state.ts             Shared runtime state (model, coding language, company context)
+    prompt.ts            System prompt builder + transcript context formatter
+    claude.ts            Claude API (streaming + non-streaming)
+    ollama.ts            Ollama fallback
+  db/
+    session.ts           SQLite session setup
+  routes/
+    ask.ts               /ask, /ask-stream, /provider
+    transcript.ts        /transcript, /sessions, /language, /audio-*
+    settings.ts          /model, /coding-language, /company-context
+
+renderer/src/
+  App.tsx                Main layout + state
+  hooks/                 useTranscript, useAiOverlay, useAudioRecorder, useSystemAudio, useSttStatus
+  components/            TranscriptList, AiResponseCard, CompanyContextPopover, ExportButton, AiOverlay, CropOverlay
+  lib/
+    mdComponents.tsx     Markdown renderer config
 ```
 
 ## Notes
 
-- Session transcripts are stored locally in `~/.interview-assistant/sessions.db` (SQLite) — nothing is sent anywhere except the LLM provider you configure.
-- The overlay uses `setContentProtection(true)`, so it won't appear in screenshots, screen recordings, or screen shares on macOS.
+- Transcripts are stored locally in `~/.interview-assistant/sessions.db` — nothing sent externally except to your configured LLM provider.
+- The overlay uses `setContentProtection(true)` — invisible in screen shares on macOS and Windows, not available on Linux.

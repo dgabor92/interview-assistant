@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import type { Components } from 'react-markdown';
 import { Mic, MicOff, Sparkles, Send, Camera, X, ChevronDown, ChevronUp, Monitor, Zap, Building2 } from 'lucide-react';
 import { useTranscript } from './hooks/useTranscript';
 import { useAiOverlay } from './hooks/useAiOverlay';
@@ -9,100 +8,25 @@ import { useAudioRecorder } from './hooks/useAudioRecorder';
 import { useSttStatus } from './hooks/useSttStatus';
 import { useSystemAudio } from './hooks/useSystemAudio';
 import { ExportButton } from './components/ExportButton';
+import { TranscriptList } from './components/TranscriptList';
+import { AiResponseCard } from './components/AiResponseCard';
+import { CompanyContextPopover } from './components/CompanyContextPopover';
+import { mdComponents } from './lib/mdComponents';
 
 const MAX_CONTEXT_ENTRIES = 40;
-
+const CODING_LANGS = ['TypeScript', 'JavaScript', 'PHP', 'Python', 'Java', 'C#'];
 const MODELS = [
   { id: 'claude-haiku-4-5-20251001', label: 'Haiku', desc: 'Gyors' },
   { id: 'claude-sonnet-4-6', label: 'Sonnet', desc: 'Okos' },
 ];
 
-function TranscriptList({ entries }: { entries: TranscriptEntry[] }) {
-  const bottomRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [entries]);
-  if (entries.length === 0) {
-    return <p className="text-gray-500 text-xs italic px-1">Várakozás a hangra...</p>;
-  }
-
-  // Merge consecutive Speaker 1 chunks into one paragraph
-  const blocks: { speaker: 'Speaker 1' | 'Speaker 2'; text: string; key: string }[] = [];
-  for (const e of entries) {
-    const last = blocks[blocks.length - 1];
-    if (last && last.speaker === e.speaker && e.speaker === 'Speaker 1') {
-      last.text += ' ' + e.text;
-    } else {
-      blocks.push({ speaker: e.speaker, text: e.text, key: e.id });
-    }
-  }
-
-  return (
-    <div className="space-y-1">
-      {blocks.map((b) => (
-        <div key={b.key} className="text-xs leading-relaxed">
-          <span className={`font-semibold mr-1 ${b.speaker === 'Speaker 1' ? 'text-sky-400' : 'text-emerald-400'}`}>
-            {b.speaker === 'Speaker 1' ? 'INT' : 'YOU'}:
-          </span>
-          <span className="text-gray-200">{b.text}</span>
-        </div>
-      ))}
-      <div ref={bottomRef} />
-    </div>
-  );
+async function postJson(url: string, body: object) {
+  await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).catch(() => {});
 }
-
-const mdComponents: Components = {
-  code({ className, children, ...props }) {
-    const isBlock = className?.startsWith('language-');
-    if (isBlock) {
-      return (
-        <pre className="bg-gray-950 border border-gray-700 rounded-md p-3 my-2 overflow-x-auto">
-          <code className={`text-green-300 text-xs font-mono leading-relaxed ${className ?? ''}`} {...props}>
-            {children}
-          </code>
-        </pre>
-      );
-    }
-    return (
-      <code className="bg-gray-950 text-green-300 text-xs font-mono px-1 py-0.5 rounded" {...props}>
-        {children}
-      </code>
-    );
-  },
-  p({ children }) { return <p className="text-gray-200 text-sm leading-relaxed mb-2">{children}</p>; },
-  ul({ children }) { return <ul className="list-disc list-inside space-y-1 my-2 text-sm text-gray-200">{children}</ul>; },
-  ol({ children }) { return <ol className="list-decimal list-inside space-y-1 my-2 text-sm text-gray-200">{children}</ol>; },
-  li({ children }) { return <li className="text-gray-200 text-sm">{children}</li>; },
-  h1({ children }) { return <h1 className="text-white font-bold text-base mb-2">{children}</h1>; },
-  h2({ children }) { return <h2 className="text-white font-semibold text-sm mb-1 mt-3">{children}</h2>; },
-  h3({ children }) { return <h3 className="text-gray-300 font-semibold text-xs mb-1 mt-2">{children}</h3>; },
-  blockquote({ children }) {
-    return <blockquote className="border-l-2 border-indigo-500 pl-3 my-2 text-gray-400 italic text-sm">{children}</blockquote>;
-  },
-};
-
-function AiResponseCard({ prompt, answer, index }: { prompt: string; answer: string; index: number }) {
-  const [collapsed, setCollapsed] = useState(false);
-  return (
-    <div className="border border-gray-700 rounded-lg overflow-hidden mb-2">
-      <button
-        onClick={() => setCollapsed((v) => !v)}
-        className="w-full flex items-center gap-2 px-3 py-1.5 bg-gray-750 hover:bg-gray-700 text-left transition-colors"
-        style={{ backgroundColor: '#1f2937' }}
-      >
-        <span className="text-indigo-400 text-xs font-mono shrink-0">#{index + 1}</span>
-        <span className="text-gray-300 text-xs truncate flex-1">{prompt || '[screenshot]'}</span>
-        {collapsed ? <ChevronDown size={10} className="text-gray-500 shrink-0" /> : <ChevronUp size={10} className="text-gray-500 shrink-0" />}
-      </button>
-      {!collapsed && (
-        <div className="px-3 py-2 bg-gray-800">
-          <ReactMarkdown components={mdComponents}>{answer}</ReactMarkdown>
-        </div>
-      )}
-    </div>
-  );
-}
-
-const CODING_LANGS = ['TypeScript', 'JavaScript', 'PHP', 'Python', 'Java', 'C#'];
 
 function App() {
   const [aiInput, setAiInput] = useState('');
@@ -128,7 +52,6 @@ function App() {
     })),
   [allEntries]);
 
-  // System audio: adds entries as Speaker 1 to the transcript state
   const [sysEntries, setSysEntries] = useState<TranscriptEntry[]>([]);
   const handleSysTranscript = useCallback((_speaker: 'Speaker 1', text: string) => {
     const now = Date.now();
@@ -145,17 +68,13 @@ function App() {
   }, [allEntries, ai]);
 
   const sysAudio = useSystemAudio(handleSysTranscript);
-
-  // Combined entries (mic + system audio), sorted by timestamp
   const combinedEntries = [...allEntries, ...sysEntries].sort((a, b) => a.timestamp - b.timestamp);
 
-  // Auto-start mic recording
   useEffect(() => {
     const timer = setTimeout(() => audio.start(), 1500);
     return () => clearTimeout(timer);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto question detection from mic (Speaker 1)
   const prevLenRef = useRef(0);
   useEffect(() => {
     const newEntries = interviewerEntries.slice(prevLenRef.current);
@@ -168,17 +87,11 @@ function App() {
     }
   }, [interviewerEntries]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Scroll to latest AI response
   useEffect(() => {
-    if (ai.responses.length > 0) {
-      aiBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
+    if (ai.responses.length > 0) aiBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [ai.responses.length]);
 
-  // Hotkeys
-  useEffect(() => {
-    window.electronAPI?.onShortcutAiTrigger(() => { aiInputRef.current?.focus(); });
-  }, []);
+  useEffect(() => { window.electronAPI?.onShortcutAiTrigger(() => { aiInputRef.current?.focus(); }); }, []);
   useEffect(() => {
     window.electronAPI?.onShortcutSnip(async () => {
       const result = await window.electronAPI?.startCropFlow();
@@ -186,14 +99,7 @@ function App() {
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Model change → update backend
-  useEffect(() => {
-    fetch('http://localhost:5001/model', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model }),
-    }).catch(() => {});
-  }, [model]);
+  useEffect(() => { postJson('http://localhost:5001/model', { model }); }, [model]);
 
   const handleAiSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -202,30 +108,14 @@ function App() {
     setAiInput('');
   };
 
-  const handleLanguageChange = async (lang: string) => {
-    await fetch('http://localhost:5001/language', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ language: lang }),
-    }).catch(() => {});
-  };
-
-  const handleCodingLangChange = async (lang: string) => {
+  const handleCodingLangChange = (lang: string) => {
     setCodingLang(lang);
-    await fetch('http://localhost:5001/coding-language', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ codingLanguage: lang }),
-    }).catch(() => {});
+    postJson('http://localhost:5001/coding-language', { codingLanguage: lang });
   };
 
-  const handleCompanyContextSave = async (ctx: string) => {
+  const handleCompanyContextSave = (ctx: string) => {
     setCompanyContext(ctx);
-    await fetch('http://localhost:5001/company-context', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ companyContext: ctx }),
-    }).catch(() => {});
+    postJson('http://localhost:5001/company-context', { companyContext: ctx });
   };
 
   const handleCropOpen = async () => {
@@ -235,29 +125,14 @@ function App() {
 
   return (
     <div className="h-screen flex flex-col bg-gray-900 text-white overflow-hidden font-sans select-none">
-      {/* Company context popover */}
       {companyOpen && (
-        <div className="absolute top-8 right-2 z-50 w-72 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-3 no-drag">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold text-gray-300">Cég / Pozíció kontextus</span>
-            <button onClick={() => setCompanyOpen(false)} className="text-gray-500 hover:text-gray-300"><X size={12} /></button>
-          </div>
-          <textarea
-            value={companyContext}
-            onChange={(e) => setCompanyContext(e.target.value)}
-            placeholder={"Pl. Next.js 14 + PostgreSQL\nSenior Frontend Developer\nMicroservices, AWS"}
-            rows={5}
-            className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2 py-1.5 outline-none border border-gray-600 focus:border-indigo-500 resize-none placeholder:text-gray-500"
-          />
-          <button
-            onClick={() => { handleCompanyContextSave(companyContext); setCompanyOpen(false); }}
-            className="mt-2 w-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded py-1 transition-colors"
-          >
-            Mentés
-          </button>
-        </div>
+        <CompanyContextPopover
+          value={companyContext}
+          onSave={handleCompanyContextSave}
+          onClose={() => setCompanyOpen(false)}
+        />
       )}
-      {/* Header */}
+
       <header className="flex items-center justify-between px-3 py-1.5 bg-gray-800 border-b border-gray-700 shrink-0 drag" style={{ cursor: 'move' }}>
         <div className="flex items-center gap-2">
           <span className="text-gray-600 text-sm select-none">⠿</span>
@@ -277,7 +152,6 @@ function App() {
           )}
         </div>
         <div className="flex items-center gap-1.5 no-drag">
-          {/* Model switch */}
           <div className="flex items-center bg-gray-700 rounded border border-gray-600 overflow-hidden">
             {MODELS.map((m) => (
               <button
@@ -294,7 +168,7 @@ function App() {
           </div>
           <select
             defaultValue="hu"
-            onChange={(e) => handleLanguageChange(e.target.value)}
+            onChange={(e) => postJson('http://localhost:5001/language', { language: e.target.value })}
             className="bg-gray-700 text-gray-200 text-xs rounded px-1.5 py-0.5 border border-gray-600 cursor-pointer"
           >
             <option value="hu">HU</option>
@@ -356,9 +230,7 @@ function App() {
         </div>
       </header>
 
-      {/* Main layout */}
       <main className="flex flex-1 gap-2 p-2 overflow-hidden">
-        {/* Transcript panel */}
         <div className="w-56 shrink-0 flex flex-col bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
           <button
             onClick={() => setTranscriptOpen((v) => !v)}
@@ -374,7 +246,6 @@ function App() {
           )}
         </div>
 
-        {/* AI panel */}
         <div className="flex-1 flex flex-col bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
           <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-700 border-b border-gray-600 shrink-0">
             <Sparkles size={11} className="text-indigo-400" />
