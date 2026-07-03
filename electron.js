@@ -23,9 +23,7 @@ function createWindow() {
     x: screenW - winW - 20,
     y: 20,
     alwaysOnTop: true,
-    frame: false,
-    titleBarStyle: 'hidden',
-    trafficLightPosition: { x: 8, y: 8 },
+    titleBarStyle: 'hiddenInset',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
