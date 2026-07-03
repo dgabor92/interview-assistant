@@ -8,3 +8,4 @@ backend/node_modules/
 renderer/node_modules/
 main/node_modules/
 renderer/dist/
+.audio-prev-device
