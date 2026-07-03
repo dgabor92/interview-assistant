@@ -30,7 +30,7 @@ function createWindow() {
   global.mainWindow = win;
 }
 
-function createCropWindow(screenshotPath, onResult) {
+function createCropWindow(screenshotBase64, onResult) {
   const { width, height } = screen.getPrimaryDisplay().bounds;
 
   const cropWin = new BrowserWindow({
@@ -48,11 +48,17 @@ function createCropWindow(screenshotPath, onResult) {
     },
   });
 
-  // Pass screenshot path via query string -- no IPC timing issues
-  cropWin.loadFile(path.join(__dirname, 'crop.html'), {
-    query: { ss: screenshotPath },
-  });
+  cropWin.loadFile(path.join(__dirname, 'crop.html'));
   cropWin.setIgnoreMouseEvents(false);
+
+  // Inject screenshot after DOM is ready -- most reliable method
+  cropWin.webContents.once('did-finish-load', () => {
+    if (screenshotBase64 && !cropWin.isDestroyed()) {
+      cropWin.webContents.executeJavaScript(
+        `document.getElementById('bg').src = 'data:image/png;base64,${screenshotBase64}';`
+      ).catch(console.error);
+    }
+  });
 
   let settled = false;
   const safeClose = () => { if (!cropWin.isDestroyed()) cropWin.close(); };
@@ -125,15 +131,8 @@ ipcMain.handle('start-crop-flow', async () => {
   });
   const screenshotBase64 = sources.length > 0 ? sources[0].thumbnail.toDataURL().split(',')[1] : null;
 
-  // Write screenshot to temp file -- avoids IPC timing issues
-  const tmpPath = path.join(os.tmpdir(), `crop-ss-${Date.now()}.png`);
-  if (screenshotBase64) {
-    fs.writeFileSync(tmpPath, Buffer.from(screenshotBase64, 'base64'));
-  }
-
   return new Promise((resolve) => {
-    const cropWinRef = createCropWindow(tmpPath, (croppedBase64) => {
-      try { fs.unlinkSync(tmpPath); } catch {}
+    createCropWindow(screenshotBase64, (croppedBase64) => {
       resolve(croppedBase64 ? { screenshot: screenshotBase64, cropped: croppedBase64 } : null);
     });
   });
