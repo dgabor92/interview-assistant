@@ -28,6 +28,8 @@ function usesClaude(): boolean {
 
 const anthropic = API_KEY ? new Anthropic({ apiKey: API_KEY }) : null;
 
+let ACTIVE_MODEL = process.env.DEFAULT_MODEL ?? 'claude-sonnet-4-6';
+
 const SYSTEM_PROMPT = `You are a real-time interview assistant helping a software developer candidate during a technical job interview.
 
 You receive:
@@ -82,7 +84,7 @@ async function askClaudeStream(
   res.flushHeaders();
 
   const stream = anthropic.messages.stream({
-    model: 'claude-sonnet-4-6',
+    model: ACTIVE_MODEL,
     max_tokens: 1024,
     system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userContent }],
@@ -114,7 +116,7 @@ async function askClaude(prompt: string, transcript: TranscriptEntry[], imageBas
     : fullPrompt;
 
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: ACTIVE_MODEL,
     max_tokens: 1024,
     system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userContent }],
@@ -276,6 +278,14 @@ app.get('/sessions/:id', (req: Request, res: Response) => {
     'SELECT * FROM transcripts WHERE session_id = ? ORDER BY created_at ASC'
   ).all(req.params.id);
   res.json(entries);
+});
+
+app.post('/model', (req: Request, res: Response) => {
+  const { model } = req.body as { model: string };
+  if (!model) { res.status(400).json({ error: 'model required' }); return; }
+  ACTIVE_MODEL = model;
+  console.log(`Model switched to: ${ACTIVE_MODEL}`);
+  res.json({ ok: true, model: ACTIVE_MODEL });
 });
 
 app.get('/language', (_req: Request, res: Response) => {

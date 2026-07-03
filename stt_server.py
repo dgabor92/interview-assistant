@@ -81,6 +81,32 @@ async def broadcast(message: dict):
     await asyncio.gather(*[c.send(data) for c in list(ws_clients)], return_exceptions=True)
 
 
+async def sys_audio_handler(websocket):
+    """Receive raw PCM Int16 chunks from Electron renderer (system audio capture)."""
+    buffer = np.array([], dtype=np.float32)
+    target_samples = int(SAMPLE_RATE * CHUNK_SECONDS)
+    try:
+        async for message in websocket:
+            if isinstance(message, bytes):
+                int16_data = np.frombuffer(message, dtype=np.int16)
+                float_data = int16_data.astype(np.float32) / 32767.0
+                buffer = np.concatenate([buffer, float_data])
+
+                while len(buffer) >= target_samples:
+                    chunk = buffer[:target_samples]
+                    buffer = buffer[target_samples:]
+                    rms = float(np.sqrt(np.mean(chunk ** 2)))
+                    if rms < SILENCE_RMS_THRESHOLD:
+                        continue
+                    segments, _ = model.transcribe(chunk, beam_size=1, language=WHISPER_LANGUAGE)
+                    for seg in segments:
+                        text = seg.text.strip()
+                        if text:
+                            send_transcript('Speaker 1', text)
+    except Exception:
+        pass
+
+
 def run_ws_server():
     global ws_loop
     ws_loop = asyncio.new_event_loop()
@@ -88,7 +114,8 @@ def run_ws_server():
 
     async def _serve():
         async with websockets.serve(ws_handler, '0.0.0.0', 8765):
-            await asyncio.Future()
+            async with websockets.serve(sys_audio_handler, '0.0.0.0', 8767):
+                await asyncio.Future()
 
     ws_loop.run_until_complete(_serve())
 
