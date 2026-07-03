@@ -55,22 +55,20 @@ ipcMain.handle('capture-area', async (_event, bounds) => {
   }
 });
 
-// --- Audio: microphone streaming ---
-ipcMain.on('audio-start', (_event) => {
-  global.mainWindow?.webContents.send('audio-recording-started');
-});
-
-ipcMain.on('audio-stop', (_event) => {
-  global.mainWindow?.webContents.send('audio-recording-stopped');
-});
-
-ipcMain.on('audio-chunk', async (_event, chunkBase64) => {
+// --- Audio: delegate start/stop to Python STT server (sounddevice) ---
+ipcMain.on('audio-start', async (_event) => {
   try {
-    await axios.post('http://localhost:5001/audio-chunk', {
-      chunk: chunkBase64,
-    });
+    await axios.post('http://localhost:8766/start');
   } catch (err) {
-    console.error('Audio chunk forwarding error:', err);
+    console.error('STT start error:', err);
+  }
+});
+
+ipcMain.on('audio-stop', async (_event) => {
+  try {
+    await axios.post('http://localhost:8766/stop');
+  } catch (err) {
+    console.error('STT stop error:', err);
   }
 });
 

@@ -80,15 +80,18 @@ app.get('/provider', (_req: Request, res: Response) => {
   });
 });
 
-app.post('/audio-chunk', async (req: Request, res: Response) => {
-  const { chunk } = req.body as { chunk: string };
-  if (!chunk) {
-    res.status(400).json({ error: 'chunk required' });
-    return;
-  }
-
+app.post('/audio-start', async (_req: Request, res: Response) => {
   try {
-    await axios.post('http://localhost:8766/transcribe-chunk', { chunk });
+    await axios.post('http://localhost:8766/start');
+    res.json({ ok: true });
+  } catch {
+    res.json({ ok: false, reason: 'stt unavailable' });
+  }
+});
+
+app.post('/audio-stop', async (_req: Request, res: Response) => {
+  try {
+    await axios.post('http://localhost:8766/stop');
     res.json({ ok: true });
   } catch {
     res.json({ ok: false, reason: 'stt unavailable' });

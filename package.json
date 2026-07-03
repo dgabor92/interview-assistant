@@ -5,9 +5,8 @@
   "scripts": {
     "dev:backend": "npm run dev --prefix backend",
     "dev:frontend": "npm run dev --prefix renderer",
-    "dev:llmproxy": "npm run dev --prefix main",
     "dev:electron": "electron .",
-    "start": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\" \"npm run dev:llmproxy\" \"wait-on http://localhost:5173 && npm run dev:electron\""
+    "start": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\" \"wait-on http://localhost:5173 && npm run dev:electron\""
   },
   "devDependencies": {
     "concurrently": "^8.0.1",

@@ -1,42 +1,44 @@
 """
-STT Server: real-time speech-to-text with simple speaker diarization.
-- HTTP POST /transcribe-chunk on port 8766 (receives base64 PCM audio from backend)
-- WebSocket broadcast on port 8765 (sends {speaker, text, id} to renderer)
+STT Server: real-time speech-to-text with energy-based speaker diarization.
+- sounddevice: direct mic capture (no WebM encoding/decoding)
+- HTTP POST /start, /stop to control recording
+- HTTP POST /transcribe-chunk kept for compatibility but ignored
+- WebSocket broadcast on port 8765: {speaker, text, id}
 """
 
 import asyncio
-import base64
 import json
 import threading
 import uuid
 from collections import deque
 
 import numpy as np
+import sounddevice as sd
 import websockets
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from faster_whisper import WhisperModel
 
-# ---------------------------------------------------------------------------
-# Globals
-# ---------------------------------------------------------------------------
 app = Flask(__name__)
 CORS(app)
 
 model = WhisperModel('small', device='cpu', compute_type='int8')
 
-audio_buffer: deque[bytes] = deque()
+audio_buffer: deque[np.ndarray] = deque()
 buffer_lock = threading.Lock()
 
 ws_clients: set = set()
 ws_loop: asyncio.AbstractEventLoop | None = None
 
 current_speaker = 'Speaker 1'
-last_segment_end: float = 0.0
-SILENCE_THRESHOLD_SEC = 1.5
+last_rms_history: deque[float] = deque(maxlen=10)
+recording = False
+stream: sd.InputStream | None = None
 
 SAMPLE_RATE = 16000
-CHUNK_SECONDS = 4  # process every 4 seconds of audio
+CHUNK_SECONDS = 3
+SILENCE_RMS_THRESHOLD = 0.01
+SPEAKER_CHANGE_RMS_RATIO = 2.5
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +66,7 @@ def run_ws_server():
 
     async def _serve():
         async with websockets.serve(ws_handler, '0.0.0.0', 8765):
-            await asyncio.Future()  # run forever
+            await asyncio.Future()
 
     ws_loop.run_until_complete(_serve())
 
@@ -72,87 +74,113 @@ def run_ws_server():
 def send_transcript(speaker: str, text: str):
     if ws_loop is None:
         return
-    msg = {'speaker': speaker, 'text': text, 'id': str(uuid.uuid4())}
-    asyncio.run_coroutine_threadsafe(broadcast(msg), ws_loop)
+    asyncio.run_coroutine_threadsafe(
+        broadcast({'speaker': speaker, 'text': text, 'id': str(uuid.uuid4())}),
+        ws_loop
+    )
 
 
 # ---------------------------------------------------------------------------
-# Audio processing thread
+# Audio capture
 # ---------------------------------------------------------------------------
+def audio_callback(indata: np.ndarray, frames: int, time, status):
+    with buffer_lock:
+        audio_buffer.append(indata[:, 0].copy())
+
+
 def process_loop():
-    global current_speaker, last_segment_end
-    accumulated: list[bytes] = []
-    target_bytes = SAMPLE_RATE * CHUNK_SECONDS * 2  # int16 = 2 bytes/sample
+    global current_speaker
+    target_samples = SAMPLE_RATE * CHUNK_SECONDS
 
     while True:
+        chunks = []
+        total = 0
         with buffer_lock:
-            while audio_buffer:
-                accumulated.append(audio_buffer.popleft())
+            while audio_buffer and total < target_samples:
+                chunk = audio_buffer.popleft()
+                chunks.append(chunk)
+                total += len(chunk)
 
-        total = sum(len(c) for c in accumulated)
-        if total < target_bytes:
-            threading.Event().wait(0.5)
+        if total < target_samples:
+            threading.Event().wait(0.3)
             continue
 
-        # Convert to numpy float32
-        raw = b''.join(accumulated)
-        accumulated = []
-        audio_np = np.frombuffer(raw[:target_bytes], dtype=np.int16).astype(np.float32) / 32768.0
+        audio_np = np.concatenate(chunks)[:target_samples]
 
-        # Transcribe
+        rms = float(np.sqrt(np.mean(audio_np ** 2)))
+        if rms < SILENCE_RMS_THRESHOLD:
+            threading.Event().wait(0.1)
+            continue
+
+        # Speaker change: significant RMS shift from recent history
+        if last_rms_history:
+            avg_prev = float(np.mean(list(last_rms_history)))
+            if avg_prev > 0 and (
+                rms / avg_prev > SPEAKER_CHANGE_RMS_RATIO
+                or avg_prev / rms > SPEAKER_CHANGE_RMS_RATIO
+            ):
+                current_speaker = 'Speaker 2' if current_speaker == 'Speaker 1' else 'Speaker 1'
+        last_rms_history.append(rms)
+
         segments, _ = model.transcribe(audio_np, beam_size=1, language='hu')
         for seg in segments:
             text = seg.text.strip()
-            if not text:
-                continue
+            if text:
+                send_transcript(current_speaker, text)
 
-            # Speaker diarization: gap > threshold = new speaker
-            if seg.start - last_segment_end > SILENCE_THRESHOLD_SEC and last_segment_end > 0:
-                current_speaker = 'Speaker 2' if current_speaker == 'Speaker 1' else 'Speaker 1'
-
-            last_segment_end = seg.end
-            send_transcript(current_speaker, text)
-
-        # Keep leftover bytes
-        if len(raw) > target_bytes:
-            accumulated.append(raw[target_bytes:])
-
-        threading.Event().wait(0.1)
+        threading.Event().wait(0.05)
 
 
 # ---------------------------------------------------------------------------
-# Flask HTTP endpoint (port 8766)
+# Flask HTTP endpoints (port 8766)
 # ---------------------------------------------------------------------------
+@app.route('/start', methods=['POST'])
+def start_recording():
+    global recording, stream
+    if recording:
+        return jsonify({'ok': True, 'status': 'already recording'})
+    recording = True
+    stream = sd.InputStream(
+        samplerate=SAMPLE_RATE, channels=1, dtype='float32',
+        callback=audio_callback, blocksize=1600
+    )
+    stream.start()
+    return jsonify({'ok': True, 'status': 'started'})
+
+
+@app.route('/stop', methods=['POST'])
+def stop_recording():
+    global recording, stream
+    if stream:
+        stream.stop()
+        stream.close()
+        stream = None
+    recording = False
+    with buffer_lock:
+        audio_buffer.clear()
+    return jsonify({'ok': True, 'status': 'stopped'})
+
+
 @app.route('/transcribe-chunk', methods=['POST'])
 def transcribe_chunk():
-    data = request.get_json(force=True)
-    chunk_b64 = data.get('chunk', '')
-    if not chunk_b64:
-        return jsonify({'error': 'no chunk'}), 400
-
-    raw = base64.b64decode(chunk_b64)
-    with buffer_lock:
-        audio_buffer.append(raw)
-
-    return jsonify({'ok': True})
+    # Kept for API compatibility; sounddevice handles capture directly
+    return jsonify({'ok': True, 'note': 'direct mic capture active'})
 
 
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({'status': 'ok', 'speaker': current_speaker})
+    return jsonify({'status': 'ok', 'speaker': current_speaker, 'recording': recording})
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 if __name__ == '__main__':
-    # Start WebSocket server in background thread
     ws_thread = threading.Thread(target=run_ws_server, daemon=True)
     ws_thread.start()
 
-    # Start audio processing thread
     proc_thread = threading.Thread(target=process_loop, daemon=True)
     proc_thread.start()
 
-    print('STT server: HTTP on :8766, WebSocket on :8765')
+    print('STT server: HTTP on :8766, WebSocket on :8765 (sounddevice mic capture)')
     app.run(host='0.0.0.0', port=8766, threaded=True)
