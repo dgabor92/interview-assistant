@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
-import { Mic, MicOff, Sparkles, Send, Camera, X, ChevronDown, ChevronUp, Monitor, Zap } from 'lucide-react';
+import { Mic, MicOff, Sparkles, Send, Camera, X, ChevronDown, ChevronUp, Monitor, Zap, Building2 } from 'lucide-react';
 import { useTranscript } from './hooks/useTranscript';
 import { useAiOverlay } from './hooks/useAiOverlay';
 import type { TranscriptEntry } from './hooks/useAiOverlay';
@@ -108,6 +108,8 @@ function App() {
   const [aiInput, setAiInput] = useState('');
   const [transcriptOpen, setTranscriptOpen] = useState(true);
   const [codingLang, setCodingLang] = useState('TypeScript');
+  const [companyContext, setCompanyContext] = useState('');
+  const [companyOpen, setCompanyOpen] = useState(false);
   const [model, setModel] = useState('claude-sonnet-4-6');
   const aiInputRef = useRef<HTMLTextAreaElement>(null);
   const aiBottomRef = useRef<HTMLDivElement>(null);
@@ -217,6 +219,15 @@ function App() {
     }).catch(() => {});
   };
 
+  const handleCompanyContextSave = async (ctx: string) => {
+    setCompanyContext(ctx);
+    await fetch('http://localhost:5001/company-context', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ companyContext: ctx }),
+    }).catch(() => {});
+  };
+
   const handleCropOpen = async () => {
     const result = await window.electronAPI?.startCropFlow();
     if (result?.cropped) ai.ask('', result.cropped, getContextSlice());
@@ -224,6 +235,28 @@ function App() {
 
   return (
     <div className="h-screen flex flex-col bg-gray-900 text-white overflow-hidden font-sans select-none">
+      {/* Company context popover */}
+      {companyOpen && (
+        <div className="absolute top-8 right-2 z-50 w-72 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-3 no-drag">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold text-gray-300">Cég / Pozíció kontextus</span>
+            <button onClick={() => setCompanyOpen(false)} className="text-gray-500 hover:text-gray-300"><X size={12} /></button>
+          </div>
+          <textarea
+            value={companyContext}
+            onChange={(e) => setCompanyContext(e.target.value)}
+            placeholder={"Pl. Next.js 14 + PostgreSQL\nSenior Frontend Developer\nMicroservices, AWS"}
+            rows={5}
+            className="w-full bg-gray-700 text-gray-100 text-xs rounded px-2 py-1.5 outline-none border border-gray-600 focus:border-indigo-500 resize-none placeholder:text-gray-500"
+          />
+          <button
+            onClick={() => { handleCompanyContextSave(companyContext); setCompanyOpen(false); }}
+            className="mt-2 w-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded py-1 transition-colors"
+          >
+            Mentés
+          </button>
+        </div>
+      )}
       {/* Header */}
       <header className="flex items-center justify-between px-3 py-1.5 bg-gray-800 border-b border-gray-700 shrink-0 drag" style={{ cursor: 'move' }}>
         <div className="flex items-center gap-2">
@@ -305,6 +338,15 @@ function App() {
             className="flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600 text-gray-200 transition-colors"
           >
             <Camera size={11} />
+          </button>
+          <button
+            onClick={() => setCompanyOpen((v) => !v)}
+            title="Cég / Pozíció kontextus"
+            className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors ${
+              companyContext.trim() ? 'bg-emerald-700 hover:bg-emerald-600 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'
+            }`}
+          >
+            <Building2 size={11} />
           </button>
           <ExportButton
             interviewer={interviewerEntries}

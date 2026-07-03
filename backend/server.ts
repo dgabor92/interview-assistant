@@ -30,8 +30,12 @@ const anthropic = API_KEY ? new Anthropic({ apiKey: API_KEY }) : null;
 
 let ACTIVE_MODEL = process.env.DEFAULT_MODEL ?? 'claude-sonnet-4-6';
 let CODING_LANGUAGE = process.env.DEFAULT_CODING_LANGUAGE ?? 'TypeScript';
+let COMPANY_CONTEXT = '';
 
 function buildSystemPrompt(): string {
+  const companySection = COMPANY_CONTEXT.trim()
+    ? `\n\nCOMPANY CONTEXT (tailor all answers to this):\n${COMPANY_CONTEXT.trim()}`
+    : '';
   return `You are a real-time interview assistant helping a software developer candidate during a technical job interview.
 
 You receive:
@@ -49,7 +53,7 @@ Your job:
 - For system design questions: give a 3-5 bullet structure, not paragraphs
 - For behavioral questions: give 1-2 sentence talking points
 - NEVER pad with "Great question!" or meta-commentary — just the answer
-- If a screenshot shows code: identify the problem or task, solve it in ${CODING_LANGUAGE}`;
+- If a screenshot shows code: identify the problem or task, solve it in ${CODING_LANGUAGE}${companySection}`;
 }
 
 interface TranscriptEntry {
@@ -309,6 +313,16 @@ app.post('/language', async (req: Request, res: Response) => {
     await axios.post('http://localhost:8766/language', { language });
   } catch {}
   res.json({ ok: true, language });
+});
+
+app.get('/company-context', (_req: Request, res: Response) => {
+  res.json({ companyContext: COMPANY_CONTEXT });
+});
+
+app.post('/company-context', (req: Request, res: Response) => {
+  const { companyContext } = req.body as { companyContext: string };
+  COMPANY_CONTEXT = companyContext ?? '';
+  res.json({ ok: true });
 });
 
 app.get('/coding-language', (_req: Request, res: Response) => {
