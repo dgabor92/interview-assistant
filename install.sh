@@ -10,9 +10,6 @@ npm install --prefix backend
 echo "==> Installing renderer dependencies..."
 npm install --prefix renderer
 
-echo "==> Installing main (LLM proxy) dependencies..."
-npm install --prefix main
-
 echo "==> Installing Python dependencies (Whisper STT)..."
 pip3 install --break-system-packages -r requirements.txt
 
