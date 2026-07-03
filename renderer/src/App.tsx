@@ -5,6 +5,7 @@ import { useTranscript } from './hooks/useTranscript';
 import { useAiOverlay } from './hooks/useAiOverlay';
 import { useAudioRecorder } from './hooks/useAudioRecorder';
 import { useCropOverlay } from './hooks/useCropOverlay';
+import { useSttStatus } from './hooks/useSttStatus';
 import { TranscriptPanel } from './components/TranscriptPanel';
 import { CropOverlay } from './components/CropOverlay';
 import { HotkeyHelp } from './components/HotkeyHelp';
@@ -19,6 +20,8 @@ function App() {
   const ai = useAiOverlay();
   const audio = useAudioRecorder();
   const crop = useCropOverlay();
+  const sttStatus = useSttStatus();
+  const [language, setLanguage] = useState('hu');
 
   // Auto question detection: new Speaker 1 entry with "?" → ask AI
   const prevInterviewerLenRef = useRef(0);
@@ -81,6 +84,15 @@ function App() {
     if (cropped) ai.ask(`Elemezd ezt a képernyőképet: ${cropped}`);
   };
 
+  const handleLanguageChange = async (lang: string) => {
+    setLanguage(lang);
+    await fetch('http://localhost:5001/language', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ language: lang }),
+    }).catch(() => {});
+  };
+
   return (
     <div className="h-screen flex flex-col bg-gray-900 text-white overflow-hidden font-sans">
       <CropOverlay {...crop} confirm={handleCropConfirm} />
@@ -88,6 +100,22 @@ function App() {
       <header className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700 shrink-0 drag">
         <h1 className="text-sm font-semibold text-white tracking-wide">Interview Assistant</h1>
         <div className="flex items-center gap-2 no-drag">
+          <div
+            title={sttStatus === 'recording' ? 'STT: felvétel' : sttStatus === 'online' ? 'STT: kész' : 'STT: offline'}
+            className={`w-2 h-2 rounded-full shrink-0 ${
+              sttStatus === 'recording' ? 'bg-red-400 animate-pulse' :
+              sttStatus === 'online' ? 'bg-green-400' : 'bg-gray-500'
+            }`}
+          />
+          <select
+            value={language}
+            onChange={(e) => handleLanguageChange(e.target.value)}
+            className="bg-gray-700 text-gray-200 text-xs rounded-lg px-2 py-1 border border-gray-600 cursor-pointer"
+          >
+            <option value="hu">HU</option>
+            <option value="en">EN</option>
+            <option value="de">DE</option>
+          </select>
           <button
             onClick={toggleRecording}
             className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg transition-colors font-medium ${
