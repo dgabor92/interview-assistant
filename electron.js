@@ -49,14 +49,29 @@ function createCropWindow(onResult) {
   cropWin.loadFile(path.join(__dirname, 'crop.html'));
   cropWin.setIgnoreMouseEvents(false);
 
-  ipcMain.once('crop-result', (_event, base64) => {
-    cropWin.close();
-    onResult(base64);
-  });
+  let settled = false;
+  const safeClose = () => { if (!cropWin.isDestroyed()) cropWin.close(); };
 
-  ipcMain.once('crop-cancel', () => {
-    cropWin.close();
+  const onResult_ = (_event, base64) => {
+    if (settled) return; settled = true;
+    ipcMain.removeListener('crop-cancel', onCancel_);
+    safeClose();
+    onResult(base64);
+  };
+  const onCancel_ = () => {
+    if (settled) return; settled = true;
+    ipcMain.removeListener('crop-result', onResult_);
+    safeClose();
     onResult(null);
+  };
+
+  ipcMain.once('crop-result', onResult_);
+  ipcMain.once('crop-cancel', onCancel_);
+
+  cropWin.on('closed', () => {
+    if (!settled) { settled = true; onResult(null); }
+    ipcMain.removeListener('crop-result', onResult_);
+    ipcMain.removeListener('crop-cancel', onCancel_);
   });
 
   return cropWin;
