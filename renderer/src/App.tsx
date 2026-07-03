@@ -46,7 +46,7 @@ function App() {
   // Cmd+Shift+S: screenshot → crop overlay
   useEffect(() => {
     window.electronAPI?.onShortcutSnip(async () => {
-      const base64 = await window.electronAPI?.startCapture();
+      const base64 = await window.electronAPI?.startCapture({ width: window.innerWidth, height: window.innerHeight });
       if (base64) crop.openWithScreenshot(base64);
     });
   }, []);
@@ -66,15 +66,16 @@ function App() {
     }
   };
 
+  const captureScreenshot = () =>
+    window.electronAPI?.startCapture({ width: window.innerWidth, height: window.innerHeight });
+
   const handleScreenshot = async () => {
-    const base64 = await window.electronAPI?.startCapture();
-    if (base64) {
-      ai.ask(`Elemezd ezt a képernyőképet: ${base64}`);
-    }
+    const base64 = await captureScreenshot();
+    if (base64) ai.ask(`Elemezd ezt a képernyőképet: ${base64}`);
   };
 
   const handleCropOpen = async () => {
-    const base64 = await window.electronAPI?.startCapture();
+    const base64 = await captureScreenshot();
     if (base64) crop.openWithScreenshot(base64);
   };
 

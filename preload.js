@@ -9,7 +9,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setOpacity: (value) => ipcRenderer.send('set-opacity', value),
 
   // Screenshot
-  startCapture: () => ipcRenderer.invoke('capture-area'),
+  startCapture: (opts) => ipcRenderer.invoke('capture-area', opts),
 
   // Audio
   audioStart: () => ipcRenderer.send('audio-start'),

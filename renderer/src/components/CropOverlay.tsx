@@ -30,7 +30,8 @@ export function CropOverlay({
       {screenshot && (
         <img
           src={`data:image/png;base64,${screenshot}`}
-          className="absolute inset-0 w-full h-full object-cover"
+          className="absolute inset-0 w-full h-full"
+          style={{ objectFit: 'fill' }}
           draggable={false}
         />
       )}

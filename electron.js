@@ -44,11 +44,12 @@ ipcMain.on('set-opacity', (_event, value) => {
 });
 
 // --- Screenshot capture ---
-ipcMain.handle('capture-area', async (_event) => {
+ipcMain.handle('capture-area', async (_event, opts = {}) => {
   try {
+    const { width = 1920, height = 1080 } = opts;
     const sources = await desktopCapturer.getSources({
       types: ['screen'],
-      thumbnailSize: { width: 1920, height: 1080 },
+      thumbnailSize: { width, height },
     });
     if (sources.length > 0) {
       return sources[0].thumbnail.toDataURL().split(',')[1];
