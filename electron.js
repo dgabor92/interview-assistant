@@ -58,6 +58,8 @@ function createCropWindow(onResult) {
     cropWin.close();
     onResult(null);
   });
+
+  return cropWin;
 }
 
 // --- Text / LLM ---
@@ -104,14 +106,15 @@ ipcMain.handle('start-crop-flow', async () => {
   const screenshotBase64 = sources.length > 0 ? sources[0].thumbnail.toDataURL().split(',')[1] : null;
 
   return new Promise((resolve) => {
-    createCropWindow((croppedBase64) => {
-      resolve(croppedBase64 ? { screenshot: screenshotBase64, cropped: croppedBase64 } : null);
+    let cropWinRef = null;
+
+    // Register crop-ready BEFORE creating window to avoid race condition
+    ipcMain.once('crop-ready', () => {
+      cropWinRef?.webContents.send('screenshot', screenshotBase64);
     });
 
-    ipcMain.once('crop-ready', () => {
-      BrowserWindow.getAllWindows()
-        .find(w => w.webContents.getURL().includes('crop.html'))
-        ?.webContents.send('screenshot', screenshotBase64);
+    cropWinRef = createCropWindow((croppedBase64) => {
+      resolve(croppedBase64 ? { screenshot: screenshotBase64, cropped: croppedBase64 } : null);
     });
   });
 });
