@@ -8,7 +8,6 @@ const {
 } = require('electron');
 const path = require('path');
 const axios = require('axios');
-const screenshot = require('screenshot-desktop');
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -45,10 +44,16 @@ ipcMain.on('set-opacity', (_event, value) => {
 });
 
 // --- Screenshot capture ---
-ipcMain.handle('capture-area', async (_event, bounds) => {
+ipcMain.handle('capture-area', async (_event) => {
   try {
-    const imgBuffer = await screenshot({ format: 'png' });
-    return imgBuffer.toString('base64');
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: 1920, height: 1080 },
+    });
+    if (sources.length > 0) {
+      return sources[0].thumbnail.toDataURL().split(',')[1];
+    }
+    return null;
   } catch (err) {
     console.error('Screenshot error:', err);
     return null;
