@@ -2,12 +2,15 @@
 STT Server: real-time speech-to-text with energy-based speaker diarization.
 - sounddevice: direct mic capture (no WebM encoding/decoding)
 - HTTP POST /start, /stop to control recording
-- HTTP POST /transcribe-chunk kept for compatibility but ignored
+- HTTP POST /language to switch Whisper language at runtime
 - WebSocket broadcast on port 8765: {speaker, text, id}
 """
 
 import asyncio
 import json
+import os
+import platform
+import subprocess
 import threading
 import uuid
 from collections import deque
@@ -19,10 +22,29 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from faster_whisper import WhisperModel
 
+
+def detect_device() -> tuple[str, str]:
+    if platform.system() == 'Darwin':
+        try:
+            result = subprocess.run(
+                ['sysctl', '-n', 'machdep.cpu.brand_string'],
+                capture_output=True, text=True
+            )
+            if 'Apple' in result.stdout:
+                return 'auto', 'auto'  # MPS/Metal via faster-whisper auto
+        except Exception:
+            pass
+    return 'cpu', 'int8'
+
+
 app = Flask(__name__)
 CORS(app)
 
-model = WhisperModel('small', device='cpu', compute_type='int8')
+device, compute_type = detect_device()
+model = WhisperModel('small', device=device, compute_type=compute_type)
+print(f'Whisper device: {device}, compute_type: {compute_type}')
+
+WHISPER_LANGUAGE = os.environ.get('WHISPER_LANGUAGE', 'hu')
 
 audio_buffer: deque[np.ndarray] = deque()
 buffer_lock = threading.Lock()
@@ -89,7 +111,7 @@ def audio_callback(indata: np.ndarray, frames: int, time, status):
 
 
 def process_loop():
-    global current_speaker
+    global current_speaker, WHISPER_LANGUAGE
     target_samples = SAMPLE_RATE * CHUNK_SECONDS
 
     while True:
@@ -122,7 +144,7 @@ def process_loop():
                 current_speaker = 'Speaker 2' if current_speaker == 'Speaker 1' else 'Speaker 1'
         last_rms_history.append(rms)
 
-        segments, _ = model.transcribe(audio_np, beam_size=1, language='hu')
+        segments, _ = model.transcribe(audio_np, beam_size=1, language=WHISPER_LANGUAGE)
         for seg in segments:
             text = seg.text.strip()
             if text:
@@ -163,13 +185,27 @@ def stop_recording():
 
 @app.route('/transcribe-chunk', methods=['POST'])
 def transcribe_chunk():
-    # Kept for API compatibility; sounddevice handles capture directly
     return jsonify({'ok': True, 'note': 'direct mic capture active'})
+
+
+@app.route('/language', methods=['POST'])
+def set_language():
+    global WHISPER_LANGUAGE
+    data = request.get_json(force=True)
+    lang = data.get('language', 'hu')
+    WHISPER_LANGUAGE = lang
+    return jsonify({'ok': True, 'language': WHISPER_LANGUAGE})
 
 
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({'status': 'ok', 'speaker': current_speaker, 'recording': recording})
+    return jsonify({
+        'status': 'ok',
+        'speaker': current_speaker,
+        'recording': recording,
+        'language': WHISPER_LANGUAGE,
+        'device': device,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -182,5 +218,5 @@ if __name__ == '__main__':
     proc_thread = threading.Thread(target=process_loop, daemon=True)
     proc_thread.start()
 
-    print('STT server: HTTP on :8766, WebSocket on :8765 (sounddevice mic capture)')
+    print(f'STT server: HTTP on :8766, WebSocket on :8765 | device={device} | lang={WHISPER_LANGUAGE}')
     app.run(host='0.0.0.0', port=8766, threaded=True)
