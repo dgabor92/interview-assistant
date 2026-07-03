@@ -25,11 +25,9 @@ const canvas = document.getElementById('canvas');
 let startX = 0, startY = 0, dragging = false;
 let lastX2 = 0, lastY2 = 0;
 
-window.cropAPI.onScreenshot((data) => {
-  bg.src = 'data:image/png;base64,' + data;
-});
-
-window.cropAPI.ready();
+// Load screenshot from temp file passed via query string
+const ssPath = new URLSearchParams(location.search).get('ss');
+if (ssPath) bg.src = ssPath.startsWith('file://') ? ssPath : `file://${ssPath}`;
 
 function getBounds(x2, y2) {
   lastX2 = x2; lastY2 = y2;

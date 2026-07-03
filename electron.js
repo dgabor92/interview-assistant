@@ -8,6 +8,8 @@ const {
   screen,
 } = require('electron');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 const axios = require('axios');
 
 function createWindow() {
@@ -28,7 +30,7 @@ function createWindow() {
   global.mainWindow = win;
 }
 
-function createCropWindow(onResult) {
+function createCropWindow(screenshotPath, onResult) {
   const { width, height } = screen.getPrimaryDisplay().bounds;
 
   const cropWin = new BrowserWindow({
@@ -46,7 +48,10 @@ function createCropWindow(onResult) {
     },
   });
 
-  cropWin.loadFile(path.join(__dirname, 'crop.html'));
+  // Pass screenshot path via query string -- no IPC timing issues
+  cropWin.loadFile(path.join(__dirname, 'crop.html'), {
+    query: { ss: screenshotPath },
+  });
   cropWin.setIgnoreMouseEvents(false);
 
   let settled = false;
@@ -120,15 +125,15 @@ ipcMain.handle('start-crop-flow', async () => {
   });
   const screenshotBase64 = sources.length > 0 ? sources[0].thumbnail.toDataURL().split(',')[1] : null;
 
+  // Write screenshot to temp file -- avoids IPC timing issues
+  const tmpPath = path.join(os.tmpdir(), `crop-ss-${Date.now()}.png`);
+  if (screenshotBase64) {
+    fs.writeFileSync(tmpPath, Buffer.from(screenshotBase64, 'base64'));
+  }
+
   return new Promise((resolve) => {
-    let cropWinRef = null;
-
-    // Register crop-ready BEFORE creating window to avoid race condition
-    ipcMain.once('crop-ready', () => {
-      cropWinRef?.webContents.send('screenshot', screenshotBase64);
-    });
-
-    cropWinRef = createCropWindow((croppedBase64) => {
+    const cropWinRef = createCropWindow(tmpPath, (croppedBase64) => {
+      try { fs.unlinkSync(tmpPath); } catch {}
       resolve(croppedBase64 ? { screenshot: screenshotBase64, cropped: croppedBase64 } : null);
     });
   });
