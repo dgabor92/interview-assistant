@@ -58,7 +58,7 @@ recording = False
 stream: sd.InputStream | None = None
 
 SAMPLE_RATE = 16000
-CHUNK_SECONDS = 3
+CHUNK_SECONDS = 1.5
 SILENCE_RMS_THRESHOLD = 0.01
 SPEAKER_CHANGE_RMS_RATIO = 2.5
 

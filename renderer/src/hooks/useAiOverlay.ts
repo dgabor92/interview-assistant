@@ -1,47 +1,95 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+export interface TranscriptEntry {
+  id: string;
+  speaker: string;
+  text: string;
+  timestamp: number;
+}
 
 export function useAiOverlay() {
   const [response, setResponse] = useState('');
-  const [responses, setResponses] = useState<string[]>([]);
+  const [responses, setResponses] = useState<{ prompt: string; answer: string }[]>([]);
   const [loading, setLoading] = useState(false);
-  const [visible, setVisible] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
 
-  const ask = async (prompt: string, image?: string) => {
+  const ask = useCallback(async (
+    prompt: string,
+    image?: string,
+    transcript?: TranscriptEntry[]
+  ) => {
     if (!prompt.trim() && !image) return;
+
+    // Cancel any in-flight request
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setLoading(true);
-    setVisible(true);
     setResponse('');
 
-    if (image) {
-      try {
-        const res = await fetch('http://localhost:5001/ask', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: prompt || '', image }),
-        });
-        const data = await res.json();
-        const text = data.result ?? 'Hiba: üres válasz.';
-        setResponse(text);
-        setResponses((prev) => [...prev, text]);
-      } catch {
-        setResponse('Hiba történt a kérés során.');
-      } finally {
-        setLoading(false);
-      }
-    } else {
-      window.electronAPI?.sendMessage(prompt);
-    }
-  };
+    const capturedPrompt = prompt;
 
-  useEffect(() => {
-    if (!window.electronAPI) return;
-    window.electronAPI.onReply((data) => {
-      setResponse(data);
-      setResponses((prev) => [...prev, data]);
+    try {
+      const res = await fetch('http://localhost:5001/ask-stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, image, transcript }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = '';
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') {
+            setResponses((prev) => [...prev, { prompt: capturedPrompt, answer: accumulated }]);
+            setLoading(false);
+            return;
+          }
+          try {
+            const parsed = JSON.parse(data) as { text: string };
+            accumulated += parsed.text;
+            setResponse(accumulated);
+          } catch {
+            // skip malformed SSE line
+          }
+        }
+      }
+
       setLoading(false);
-      setVisible(true);
-    });
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === 'AbortError') return;
+      setResponse('Hiba: nem sikerült kapcsolódni a backendhez (http://localhost:5001).');
+      setLoading(false);
+    }
   }, []);
 
-  return { response, responses, loading, visible, setVisible, ask };
+  useEffect(() => {
+    return () => { abortRef.current?.abort(); };
+  }, []);
+
+  const clear = useCallback(() => {
+    abortRef.current?.abort();
+    setResponse('');
+    setLoading(false);
+  }, []);
+
+  return { response, responses, loading, ask, clear };
 }

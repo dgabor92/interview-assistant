@@ -28,55 +28,107 @@ function usesClaude(): boolean {
 
 const anthropic = API_KEY ? new Anthropic({ apiKey: API_KEY }) : null;
 
-type TextMessage = { role: 'user' | 'assistant'; content: string };
-const contextWindow: TextMessage[] = [];
-const MAX_CONTEXT = 10;
+const SYSTEM_PROMPT = `You are a real-time interview assistant helping a software developer candidate during a technical job interview.
 
-const SYSTEM_PROMPT = `You are an interview assistant helping a software developer candidate during a technical interview.
+You receive:
+1. The full conversation transcript so far (INTERVIEWER and CANDIDATE turns)
+2. The specific question or task to answer
+3. Optionally a screenshot of code or a problem
 
-Rules:
-- Always respond in the SAME LANGUAGE as the user's message (if Hungarian, respond in Hungarian; if English, in English)
-- When you see a screenshot with code or a coding problem: identify the issue or question, then provide a WORKING CODE SOLUTION with a brief explanation
-- When analyzing a screenshot: describe only what is directly relevant to answering the question
-- Keep answers concise and practical — the candidate needs to understand quickly
-- If you see code: always include a corrected or improved code snippet in your answer`;
+Your job:
+- Answer CONCISELY and PRACTICALLY — the candidate needs to understand in seconds, not minutes
+- Match the language of the conversation (Hungarian → Hungarian, English → English)
+- For coding questions: provide working code immediately, explain briefly after
+- For system design questions: give a 3-5 bullet structure, not paragraphs
+- For behavioral questions: give 1-2 sentence talking points
+- NEVER pad with "Great question!" or meta-commentary — just the answer
+- If a screenshot shows code: identify the problem or task, solve it`;
 
-async function askClaude(prompt: string, imageBase64?: string): Promise<string> {
+interface TranscriptEntry {
+  speaker: string;
+  text: string;
+  timestamp?: number;
+}
+
+function buildTranscriptContext(transcript: TranscriptEntry[]): string {
+  if (!transcript || transcript.length === 0) return '';
+  const lines = transcript.map(e => `${e.speaker === 'Speaker 1' ? 'INTERVIEWER' : 'CANDIDATE'}: ${e.text}`);
+  return `\n\nCONVERSATION SO FAR:\n${lines.join('\n')}`;
+}
+
+async function askClaudeStream(
+  prompt: string,
+  transcript: TranscriptEntry[],
+  imageBase64: string | undefined,
+  res: Response
+): Promise<void> {
   if (!anthropic) throw new Error('No ANTHROPIC_API_KEY set');
+
+  const context = buildTranscriptContext(transcript);
+  const fullPrompt = context
+    ? `${context}\n\nQUESTION TO ANSWER: ${prompt || 'What should the candidate say or do next?'}`
+    : (prompt || 'What should the candidate say or do next?');
 
   const userContent: Anthropic.MessageParam['content'] = imageBase64
     ? [
         { type: 'image', source: { type: 'base64', media_type: 'image/png', data: imageBase64 } },
-        { type: 'text', text: prompt || 'Elemezd a képernyőképet. Ha kódot látsz, adj működő megoldást.' },
+        { type: 'text', text: fullPrompt },
       ]
-    : prompt;
+    : fullPrompt;
 
-  // Store only text in context window (vision content not serializable)
-  contextWindow.push({ role: 'user', content: prompt || '[screenshot]' });
-  if (contextWindow.length > MAX_CONTEXT) contextWindow.splice(0, contextWindow.length - MAX_CONTEXT);
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
 
-  const messages: Anthropic.MessageParam[] = [
-    ...contextWindow.slice(0, -1),
-    { role: 'user', content: userContent },
-  ];
+  const stream = anthropic.messages.stream({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 1024,
+    system: SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: userContent }],
+  });
+
+  for await (const chunk of stream) {
+    if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+      res.write(`data: ${JSON.stringify({ text: chunk.delta.text })}\n\n`);
+    }
+  }
+
+  res.write('data: [DONE]\n\n');
+  res.end();
+}
+
+async function askClaude(prompt: string, transcript: TranscriptEntry[], imageBase64?: string): Promise<string> {
+  if (!anthropic) throw new Error('No ANTHROPIC_API_KEY set');
+
+  const context = buildTranscriptContext(transcript);
+  const fullPrompt = context
+    ? `${context}\n\nQUESTION TO ANSWER: ${prompt || 'What should the candidate say or do next?'}`
+    : (prompt || 'What should the candidate say or do next?');
+
+  const userContent: Anthropic.MessageParam['content'] = imageBase64
+    ? [
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: imageBase64 } },
+        { type: 'text', text: fullPrompt },
+      ]
+    : fullPrompt;
 
   const response = await anthropic.messages.create({
     model: 'claude-sonnet-4-6',
-    max_tokens: 2048,
+    max_tokens: 1024,
     system: SYSTEM_PROMPT,
-    messages,
+    messages: [{ role: 'user', content: userContent }],
   });
 
-  const text = response.content[0].type === 'text' ? response.content[0].text : '';
-  contextWindow.push({ role: 'assistant', content: text });
-  if (contextWindow.length > MAX_CONTEXT) contextWindow.splice(0, contextWindow.length - MAX_CONTEXT);
-  return text;
+  return response.content[0].type === 'text' ? response.content[0].text : '';
 }
 
-async function askOllama(prompt: string): Promise<string> {
+async function askOllama(prompt: string, transcript: TranscriptEntry[]): Promise<string> {
+  const context = buildTranscriptContext(transcript);
+  const fullPrompt = context ? `${context}\n\nQUESTION: ${prompt}` : prompt;
   const response = await axios.post(`${OLLAMA_URL}/api/generate`, {
     model: OLLAMA_MODEL,
-    prompt,
+    prompt: fullPrompt,
     stream: false,
   });
   return response.data.response ?? 'No response from Ollama';
@@ -107,22 +159,66 @@ const SESSION_ID = Date.now().toString();
 db.prepare('INSERT INTO sessions (id) VALUES (?)').run(SESSION_ID);
 
 // ---------------------------------------------------------------------------
-// Language forwarding
+// Language
 // ---------------------------------------------------------------------------
 let whisperLanguage = process.env.WHISPER_LANGUAGE ?? 'hu';
 
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
-app.post('/ask', async (req: Request, res: Response) => {
-  const { prompt, image } = req.body as { prompt: string; image?: string };
+
+// Streaming endpoint — used by default
+app.post('/ask-stream', async (req: Request, res: Response) => {
+  const { prompt, image, transcript } = req.body as {
+    prompt: string;
+    image?: string;
+    transcript?: TranscriptEntry[];
+  };
+
   if (!prompt?.trim() && !image) {
     res.status(400).json({ error: 'prompt or image required' });
     return;
   }
 
   try {
-    const result = usesClaude() ? await askClaude(prompt ?? '', image) : await askOllama(prompt ?? '');
+    if (usesClaude()) {
+      await askClaudeStream(prompt ?? '', transcript ?? [], image, res);
+    } else {
+      // Ollama fallback (non-streaming)
+      const result = await askOllama(prompt ?? '', transcript ?? []);
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.write(`data: ${JSON.stringify({ text: result })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    }
+  } catch (err) {
+    console.error('LLM stream error:', err);
+    if (!res.headersSent) res.status(500).json({ error: 'LLM request failed' });
+    else {
+      res.write(`data: ${JSON.stringify({ text: '\n\n[Error: LLM request failed]' })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    }
+  }
+});
+
+// Non-streaming fallback
+app.post('/ask', async (req: Request, res: Response) => {
+  const { prompt, image, transcript } = req.body as {
+    prompt: string;
+    image?: string;
+    transcript?: TranscriptEntry[];
+  };
+
+  if (!prompt?.trim() && !image) {
+    res.status(400).json({ error: 'prompt or image required' });
+    return;
+  }
+
+  try {
+    const result = usesClaude()
+      ? await askClaude(prompt ?? '', transcript ?? [], image)
+      : await askOllama(prompt ?? '', transcript ?? []);
     res.json({ result, provider: usesClaude() ? 'claude' : 'ollama' });
   } catch (err) {
     console.error('LLM error:', err);
@@ -200,5 +296,5 @@ app.post('/language', async (req: Request, res: Response) => {
 });
 
 app.listen(5001, () => {
-  console.log(`Backend on :5001 | LLM: ${usesClaude() ? 'Claude API' : 'Ollama'} (provider=${PROVIDER}) | session=${SESSION_ID}`);
+  console.log(`Backend on :5001 | LLM: ${usesClaude() ? 'Claude API (streaming)' : 'Ollama'} | session=${SESSION_ID}`);
 });

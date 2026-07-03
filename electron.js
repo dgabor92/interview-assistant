@@ -13,9 +13,19 @@ const os = require('os');
 const axios = require('axios');
 
 function createWindow() {
+  const { width: screenW } = screen.getPrimaryDisplay().workAreaSize;
+  const winW = 720;
+  const winH = 520;
+
   const win = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: winW,
+    height: winH,
+    x: screenW - winW - 20,
+    y: 20,
+    alwaysOnTop: true,
+    frame: false,
+    titleBarStyle: 'hidden',
+    trafficLightPosition: { x: 8, y: 8 },
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

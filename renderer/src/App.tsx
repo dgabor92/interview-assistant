@@ -1,40 +1,77 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Mic, MicOff, Sparkles, Send, Camera } from 'lucide-react';
-import { useTranscript } from './hooks/useTranscript';
+import { Mic, MicOff, Sparkles, Send, Camera, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { useTranscript, TranscriptEntry } from './hooks/useTranscript';
 import { useAiOverlay } from './hooks/useAiOverlay';
 import { useAudioRecorder } from './hooks/useAudioRecorder';
-import { useCropOverlay } from './hooks/useCropOverlay';
 import { useSttStatus } from './hooks/useSttStatus';
-import { TranscriptPanel } from './components/TranscriptPanel';
-import { CropOverlay } from './components/CropOverlay';
-import { HotkeyHelp } from './components/HotkeyHelp';
 import { ExportButton } from './components/ExportButton';
+
+// Keep last N entries for AI context (enough to cover the full interview so far)
+const MAX_CONTEXT_ENTRIES = 40;
+
+function TranscriptList({ entries }: { entries: TranscriptEntry[] }) {
+  const bottomRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [entries]);
+  if (entries.length === 0) {
+    return <p className="text-gray-500 text-xs italic px-1">Várakozás a hangra...</p>;
+  }
+  return (
+    <div className="space-y-1">
+      {entries.map((e) => (
+        <div key={e.id} className="text-xs leading-relaxed">
+          <span className={`font-semibold mr-1 ${e.speaker === 'Speaker 1' ? 'text-sky-400' : 'text-emerald-400'}`}>
+            {e.speaker === 'Speaker 1' ? 'INT' : 'YOU'}:
+          </span>
+          <span className="text-gray-200">{e.text}</span>
+        </div>
+      ))}
+      <div ref={bottomRef} />
+    </div>
+  );
+}
 
 function App() {
   const [aiInput, setAiInput] = useState('');
+  const [transcriptOpen, setTranscriptOpen] = useState(true);
   const aiInputRef = useRef<HTMLTextAreaElement>(null);
 
-  const interviewerEntries = useTranscript('Speaker 1');
-  const candidateEntries = useTranscript('Speaker 2');
+  const allEntries = useTranscript();
   const ai = useAiOverlay();
   const audio = useAudioRecorder();
-  const crop = useCropOverlay();
   const sttStatus = useSttStatus();
   const [language, setLanguage] = useState('hu');
 
-  // Auto question detection: new Speaker 1 entry with "?" → ask AI
-  const prevInterviewerLenRef = useRef(0);
+  // Helpers: filtered views for display
+  const interviewerEntries = allEntries.filter((e) => e.speaker === 'Speaker 1');
+  const candidateEntries = allEntries.filter((e) => e.speaker === 'Speaker 2');
+
+  // Build context slice for AI calls
+  const getContextSlice = () => allEntries.slice(-MAX_CONTEXT_ENTRIES).map((e) => ({
+    id: e.id,
+    speaker: e.speaker,
+    text: e.text,
+    timestamp: e.timestamp,
+  }));
+
+  // Auto-start recording when app opens
   useEffect(() => {
-    const newEntries = interviewerEntries.slice(prevInterviewerLenRef.current);
-    prevInterviewerLenRef.current = interviewerEntries.length;
+    const timer = setTimeout(() => audio.start(), 1500);
+    return () => clearTimeout(timer);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto question detection: new Speaker 1 entry ending with "?" → ask AI
+  const prevLenRef = useRef(0);
+  useEffect(() => {
+    const newEntries = interviewerEntries.slice(prevLenRef.current);
+    prevLenRef.current = interviewerEntries.length;
     for (const entry of newEntries) {
-      if (entry.text.includes('?')) {
-        ai.ask(entry.text);
+      if (entry.text.trim().endsWith('?')) {
+        ai.ask(entry.text, undefined, getContextSlice());
         break;
       }
     }
-  }, [interviewerEntries]);
+  }, [interviewerEntries]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Cmd+K: focus AI input
   useEffect(() => {
@@ -43,46 +80,19 @@ function App() {
     });
   }, []);
 
-  // Cmd+Shift+S: open fullscreen crop overlay window
+  // Cmd+Shift+S: screenshot + crop → AI
   useEffect(() => {
     window.electronAPI?.onShortcutSnip(async () => {
       const result = await window.electronAPI?.startCropFlow();
-      if (result?.cropped) ai.ask('', result.cropped);
+      if (result?.cropped) ai.ask('', result.cropped, getContextSlice());
     });
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleAiSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!aiInput.trim()) return;
-    ai.ask(aiInput);
+    ai.ask(aiInput, undefined, getContextSlice());
     setAiInput('');
-  };
-
-  const toggleRecording = () => {
-    if (audio.isRecording) {
-      audio.stop();
-    } else {
-      audio.start();
-    }
-  };
-
-  const captureScreenshot = () =>
-    window.electronAPI?.startCapture({ width: window.innerWidth, height: window.innerHeight });
-
-  const handleScreenshot = async () => {
-    const base64 = await captureScreenshot();
-    if (base64) ai.ask('', base64);
-  };
-
-  const handleCropOpen = async () => {
-    const result = await window.electronAPI?.startCropFlow();
-    if (result?.cropped) ai.ask('', result.cropped);
-  };
-
-  const handleCropConfirm = async () => {
-    const cropped = await crop.confirm();
-    crop.close();
-    if (cropped) ai.ask('', cropped);
   };
 
   const handleLanguageChange = async (lang: string) => {
@@ -94,13 +104,17 @@ function App() {
     }).catch(() => {});
   };
 
+  const handleCropOpen = async () => {
+    const result = await window.electronAPI?.startCropFlow();
+    if (result?.cropped) ai.ask('', result.cropped, getContextSlice());
+  };
+
   return (
-    <div className="h-screen flex flex-col bg-gray-900 text-white overflow-hidden font-sans">
-      <CropOverlay {...crop} confirm={handleCropConfirm} />
+    <div className="h-screen flex flex-col bg-gray-900 text-white overflow-hidden font-sans select-none">
       {/* Header */}
-      <header className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700 shrink-0 drag">
-        <h1 className="text-sm font-semibold text-white tracking-wide">Interview Assistant</h1>
-        <div className="flex items-center gap-2 no-drag">
+      <header className="flex items-center justify-between px-3 py-1.5 bg-gray-800 border-b border-gray-700 shrink-0 drag">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-gray-300 tracking-wide">Interview</span>
           <div
             title={sttStatus === 'recording' ? 'STT: felvétel' : sttStatus === 'online' ? 'STT: kész' : 'STT: offline'}
             className={`w-2 h-2 rounded-full shrink-0 ${
@@ -108,98 +122,99 @@ function App() {
               sttStatus === 'online' ? 'bg-green-400' : 'bg-gray-500'
             }`}
           />
+        </div>
+        <div className="flex items-center gap-1.5 no-drag">
           <select
             value={language}
             onChange={(e) => handleLanguageChange(e.target.value)}
-            className="bg-gray-700 text-gray-200 text-xs rounded-lg px-2 py-1 border border-gray-600 cursor-pointer"
+            className="bg-gray-700 text-gray-200 text-xs rounded px-1.5 py-0.5 border border-gray-600 cursor-pointer"
           >
             <option value="hu">HU</option>
             <option value="en">EN</option>
             <option value="de">DE</option>
           </select>
           <button
-            onClick={toggleRecording}
-            className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg transition-colors font-medium ${
+            onClick={() => audio.isRecording ? audio.stop() : audio.start()}
+            className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors font-medium ${
               audio.isRecording
                 ? 'bg-red-600 hover:bg-red-500 text-white'
                 : 'bg-gray-700 hover:bg-gray-600 text-gray-200'
             }`}
           >
-            {audio.isRecording ? <MicOff size={13} /> : <Mic size={13} />}
-            {audio.isRecording ? 'Stop' : 'R'}
+            {audio.isRecording ? <MicOff size={11} /> : <Mic size={11} />}
+            {audio.isRecording ? 'Stop' : 'Rec'}
           </button>
           <input
-            type="range"
-            min="0.2"
-            max="1"
-            step="0.05"
-            defaultValue="1"
-            className="w-20 accent-indigo-500"
+            type="range" min="0.2" max="1" step="0.05" defaultValue="1"
+            className="w-16 accent-indigo-500"
             onChange={(e) => window.electronAPI?.setOpacity(parseFloat(e.target.value))}
           />
           <button
             onClick={handleCropOpen}
-            title="Képkivágás → AI (⌘⇧S)"
-            className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg transition-colors font-medium bg-gray-700 hover:bg-gray-600 text-gray-200"
+            title="Screenshot → AI (⌘⇧S)"
+            className="flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600 text-gray-200 transition-colors"
           >
-            <Camera size={13} />
+            <Camera size={11} />
           </button>
           <ExportButton
             interviewer={interviewerEntries}
             candidate={candidateEntries}
-            aiResponses={ai.responses}
+            aiResponses={ai.responses.map((r) => r.answer)}
           />
-          <HotkeyHelp />
         </div>
       </header>
 
-      {/* Main: 3 columns */}
-      <main className="flex flex-1 gap-3 p-3 overflow-hidden">
-        {/* Interviewer transcript */}
-        <div className="flex-1 min-w-0">
-          <TranscriptPanel
-            label="Interjúztató (Speaker 1)"
-            entries={interviewerEntries}
-            colorClass="text-sky-300"
-          />
-        </div>
-
-        {/* Candidate transcript */}
-        <div className="flex-1 min-w-0">
-          <TranscriptPanel
-            label="Jelölt (Speaker 2)"
-            entries={candidateEntries}
-            colorClass="text-emerald-300"
-          />
+      {/* Main layout: transcript left, AI right */}
+      <main className="flex flex-1 gap-2 p-2 overflow-hidden">
+        {/* Transcript panel */}
+        <div className="w-64 shrink-0 flex flex-col bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+          <button
+            onClick={() => setTranscriptOpen((v) => !v)}
+            className="flex items-center justify-between px-3 py-1.5 bg-gray-700 border-b border-gray-600 text-xs font-semibold text-gray-300 hover:bg-gray-600 transition-colors"
+          >
+            <span>Transcript ({allEntries.length})</span>
+            {transcriptOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+          </button>
+          {transcriptOpen && (
+            <div className="flex-1 overflow-y-auto p-2">
+              <TranscriptList entries={allEntries} />
+            </div>
+          )}
         </div>
 
         {/* AI panel */}
-        <div className="w-72 shrink-0 flex flex-col bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-2 bg-gray-700 border-b border-gray-600 shrink-0">
-            <Sparkles size={13} className="text-indigo-400" />
-            <span className="text-sm font-semibold text-indigo-300">AI segítség</span>
-            <span className="text-gray-500 text-xs ml-auto">Cmd+K</span>
+        <div className="flex-1 flex flex-col bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-700 border-b border-gray-600 shrink-0">
+            <Sparkles size={11} className="text-indigo-400" />
+            <span className="text-xs font-semibold text-indigo-300">AI segítség</span>
+            <span className="text-gray-500 text-xs ml-auto">⌘K</span>
+            {(ai.response || ai.loading) && (
+              <button onClick={ai.clear} className="text-gray-500 hover:text-gray-300 transition-colors">
+                <X size={11} />
+              </button>
+            )}
           </div>
 
-          <div className="flex-1 overflow-y-auto px-4 py-3">
-            {ai.loading ? (
-              <div className="flex items-center gap-1.5 text-gray-400 text-sm">
+          <div className="flex-1 overflow-y-auto px-3 py-2">
+            {ai.loading && !ai.response ? (
+              <div className="flex items-center gap-1 text-gray-400 text-xs">
                 <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
                 <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse [animation-delay:150ms]" />
                 <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse [animation-delay:300ms]" />
               </div>
             ) : ai.response ? (
-              <div className="prose prose-invert prose-sm max-w-none text-gray-200">
+              <div className="prose prose-invert prose-xs max-w-none text-gray-200 text-sm">
                 <ReactMarkdown>{ai.response}</ReactMarkdown>
+                {ai.loading && <span className="inline-block w-1 h-3 bg-indigo-400 animate-pulse ml-0.5 align-middle" />}
               </div>
             ) : (
-              <p className="text-gray-500 text-sm italic">
-                Automatikusan aktiválódik ha kérdést detektál, vagy Cmd+K...
+              <p className="text-gray-500 text-xs italic">
+                Auto-aktiválódik kérdés észlelésekor, vagy ⌘K / ⌘⇧S...
               </p>
             )}
           </div>
 
-          <form onSubmit={handleAiSubmit} className="flex flex-col gap-2 p-3 border-t border-gray-700 shrink-0 no-drag">
+          <form onSubmit={handleAiSubmit} className="flex gap-1.5 p-2 border-t border-gray-700 shrink-0 no-drag">
             <textarea
               ref={aiInputRef}
               value={aiInput}
@@ -210,16 +225,15 @@ function App() {
                   handleAiSubmit(e);
                 }
               }}
-              placeholder="Kérdés az AI-nak... (Enter küld)"
-              rows={3}
-              className="w-full bg-gray-700 text-gray-100 text-sm rounded-lg px-3 py-2 outline-none border border-gray-600 focus:border-indigo-500 transition-colors placeholder:text-gray-500 resize-none"
+              placeholder="Kérdés (Enter = küld)..."
+              rows={2}
+              className="flex-1 bg-gray-700 text-gray-100 text-xs rounded px-2 py-1.5 outline-none border border-gray-600 focus:border-indigo-500 transition-colors placeholder:text-gray-500 resize-none"
             />
             <button
               type="submit"
-              className="flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg py-1.5 transition-colors"
+              className="flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 text-white rounded px-2 transition-colors"
             >
               <Send size={13} />
-              Küldés
             </button>
           </form>
         </div>
