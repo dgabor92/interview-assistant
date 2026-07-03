@@ -36,6 +36,11 @@ export function useTranscript(speakerLabel: 'Speaker 1' | 'Speaker 2') {
                 timestamp: Date.now(),
               },
             ]);
+            fetch('http://localhost:5001/transcript', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ speaker: data.speaker, text: data.text }),
+            }).catch(() => {});
           }
         } catch {
           // ignore malformed messages
