@@ -32,15 +32,22 @@ export function useTranscript() {
           try {
             const data = JSON.parse(event.data as string) as WsMessage;
             if (data.speaker !== 'Speaker 1' && data.speaker !== 'Speaker 2') return;
-            setEntries((prev) => [
-              ...prev,
-              {
-                id: data.id ?? crypto.randomUUID(),
-                speaker: data.speaker as 'Speaker 1' | 'Speaker 2',
-                text: data.text,
-                timestamp: Date.now(),
-              },
-            ]);
+            const now = Date.now();
+            setEntries((prev) => {
+              const last = prev[prev.length - 1];
+              if (last && last.speaker === data.speaker && now - last.timestamp < 3000) {
+                return [...prev.slice(0, -1), { ...last, text: last.text + ' ' + data.text }];
+              }
+              return [
+                ...prev,
+                {
+                  id: data.id ?? crypto.randomUUID(),
+                  speaker: data.speaker as 'Speaker 1' | 'Speaker 2',
+                  text: data.text,
+                  timestamp: now,
+                },
+              ];
+            });
             fetch('http://localhost:5001/transcript', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },

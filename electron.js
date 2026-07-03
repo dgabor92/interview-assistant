@@ -6,6 +6,7 @@ const {
   desktopCapturer,
   nativeImage,
   screen,
+  session,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -164,6 +165,13 @@ ipcMain.on('audio-stop', async (_event) => {
 });
 
 app.whenReady().then(() => {
+  // Enable getDisplayMedia in renderer — silent audio loopback, no screen picker
+  session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+    desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
+      callback({ video: sources[0], audio: 'loopback' });
+    }).catch(() => callback({}));
+  });
+
   createWindow();
 
   // Cmd+Shift+S: snip / screenshot trigger

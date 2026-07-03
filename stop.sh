@@ -17,4 +17,11 @@ pkill -f "electron ." 2>/dev/null || true
 pkill -f "vite" 2>/dev/null || true
 pkill -f "stt_server.py" 2>/dev/null || true
 
+# Audio: restore previous device
+if command -v SwitchAudioSource &>/dev/null && [ -f .audio-prev-device ]; then
+  PREV=$(cat .audio-prev-device)
+  SwitchAudioSource -s "$PREV" 2>/dev/null && echo "==> Audio restored to: $PREV"
+  rm -f .audio-prev-device
+fi
+
 echo "==> All processes stopped."

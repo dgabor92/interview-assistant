@@ -23,14 +23,26 @@ function TranscriptList({ entries }: { entries: TranscriptEntry[] }) {
   if (entries.length === 0) {
     return <p className="text-gray-500 text-xs italic px-1">Várakozás a hangra...</p>;
   }
+
+  // Merge consecutive Speaker 1 chunks into one paragraph
+  const blocks: { speaker: 'Speaker 1' | 'Speaker 2'; text: string; key: string }[] = [];
+  for (const e of entries) {
+    const last = blocks[blocks.length - 1];
+    if (last && last.speaker === e.speaker && e.speaker === 'Speaker 1') {
+      last.text += ' ' + e.text;
+    } else {
+      blocks.push({ speaker: e.speaker, text: e.text, key: e.id });
+    }
+  }
+
   return (
     <div className="space-y-1">
-      {entries.map((e) => (
-        <div key={e.id} className="text-xs leading-relaxed">
-          <span className={`font-semibold mr-1 ${e.speaker === 'Speaker 1' ? 'text-sky-400' : 'text-emerald-400'}`}>
-            {e.speaker === 'Speaker 1' ? 'INT' : 'YOU'}:
+      {blocks.map((b) => (
+        <div key={b.key} className="text-xs leading-relaxed">
+          <span className={`font-semibold mr-1 ${b.speaker === 'Speaker 1' ? 'text-sky-400' : 'text-emerald-400'}`}>
+            {b.speaker === 'Speaker 1' ? 'INT' : 'YOU'}:
           </span>
-          <span className="text-gray-200">{e.text}</span>
+          <span className="text-gray-200">{b.text}</span>
         </div>
       ))}
       <div ref={bottomRef} />
@@ -90,9 +102,12 @@ function AiResponseCard({ prompt, answer, index }: { prompt: string; answer: str
   );
 }
 
+const CODING_LANGS = ['TypeScript', 'JavaScript', 'PHP', 'Python', 'Java', 'C#'];
+
 function App() {
   const [aiInput, setAiInput] = useState('');
   const [transcriptOpen, setTranscriptOpen] = useState(true);
+  const [codingLang, setCodingLang] = useState('TypeScript');
   const [model, setModel] = useState('claude-sonnet-4-6');
   const aiInputRef = useRef<HTMLTextAreaElement>(null);
   const aiBottomRef = useRef<HTMLDivElement>(null);
@@ -114,13 +129,16 @@ function App() {
   // System audio: adds entries as Speaker 1 to the transcript state
   const [sysEntries, setSysEntries] = useState<TranscriptEntry[]>([]);
   const handleSysTranscript = useCallback((_speaker: 'Speaker 1', text: string) => {
-    const entry: TranscriptEntry = {
-      id: crypto.randomUUID(), speaker: 'Speaker 1', text, timestamp: Date.now(),
-    };
-    setSysEntries((prev) => [...prev, entry]);
-    // Also auto-trigger AI if it looks like a question
+    const now = Date.now();
+    setSysEntries((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && now - last.timestamp < 3000) {
+        return [...prev.slice(0, -1), { ...last, text: last.text + ' ' + text }];
+      }
+      return [...prev, { id: crypto.randomUUID(), speaker: 'Speaker 1' as const, text, timestamp: now }];
+    });
     if (text.trim().endsWith('?')) {
-      ai.ask(text, undefined, [...allEntries, entry].slice(-MAX_CONTEXT_ENTRIES));
+      ai.ask(text, undefined, allEntries.slice(-MAX_CONTEXT_ENTRIES));
     }
   }, [allEntries, ai]);
 
@@ -190,6 +208,15 @@ function App() {
     }).catch(() => {});
   };
 
+  const handleCodingLangChange = async (lang: string) => {
+    setCodingLang(lang);
+    await fetch('http://localhost:5001/coding-language', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ codingLanguage: lang }),
+    }).catch(() => {});
+  };
+
   const handleCropOpen = async () => {
     const result = await window.electronAPI?.startCropFlow();
     if (result?.cropped) ai.ask('', result.cropped, getContextSlice());
@@ -240,6 +267,14 @@ function App() {
             <option value="hu">HU</option>
             <option value="en">EN</option>
             <option value="de">DE</option>
+          </select>
+          <select
+            value={codingLang}
+            onChange={(e) => handleCodingLangChange(e.target.value)}
+            className="bg-gray-700 text-gray-200 text-xs rounded px-1.5 py-0.5 border border-gray-600 cursor-pointer"
+            title="Kód nyelv"
+          >
+            {CODING_LANGS.map((l) => <option key={l} value={l}>{l}</option>)}
           </select>
           <button
             onClick={() => audio.isRecording ? audio.stop() : audio.start()}

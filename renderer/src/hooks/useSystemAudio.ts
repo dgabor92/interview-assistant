@@ -22,19 +22,34 @@ export function useSystemAudio(onTranscript: (speaker: 'Speaker 1', text: string
   const start = useCallback(async () => {
     try {
       // Open screen/audio picker
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          sampleRate: 16000,
-        },
-      });
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            sampleRate: 16000,
+          },
+        });
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === 'AbortError') return;
+        alert(
+          'System audio hiba: a böngésző nem engedélyezte a hang rögzítését.\n\n' +
+          'macOS Sonoma/Sequoia-n: a megosztó dialógban pipáld be az "Include computer audio" opciót.'
+        );
+        return;
+      }
 
       const audioTrack = stream.getAudioTracks()[0];
       if (!audioTrack) {
         stream.getTracks().forEach((t) => t.stop());
-        alert('Nincs hang ebben a forrásban. Válassz olyan ablakot/képernyőt amelynek van hangja.');
+        alert(
+          'Nincs hang ebben a forrásban.\n\n' +
+          'A megosztó dialógban pipáld be az "Include computer audio" / "Számítógép hangjának megosztása" opciót,\n' +
+          'majd kattints a Share/Megosztás gombra.\n\n' +
+          '(macOS Sonoma/Sequoia-n BlackHole nem szükséges)'
+        );
         return;
       }
 

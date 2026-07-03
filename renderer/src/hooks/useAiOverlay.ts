@@ -12,6 +12,7 @@ export function useAiOverlay() {
   const [responses, setResponses] = useState<{ prompt: string; answer: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const lastAskRef = useRef<{ prompt: string; ts: number } | null>(null);
 
   const ask = useCallback(async (
     prompt: string,
@@ -19,6 +20,11 @@ export function useAiOverlay() {
     transcript?: TranscriptEntry[]
   ) => {
     if (!prompt.trim() && !image) return;
+
+    // Deduplicate: ignore same prompt within 2 seconds
+    const now = Date.now();
+    if (lastAskRef.current && lastAskRef.current.prompt === prompt && now - lastAskRef.current.ts < 2000) return;
+    lastAskRef.current = { prompt, ts: now };
 
     // Cancel any in-flight request
     abortRef.current?.abort();

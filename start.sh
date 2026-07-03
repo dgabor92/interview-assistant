@@ -15,6 +15,17 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Audio: switch to Multi-Output Device if BlackHole is installed
+AUDIO_PREV=""
+if command -v SwitchAudioSource &>/dev/null; then
+  if SwitchAudioSource -a | grep -q "Multi-Output Device"; then
+    AUDIO_PREV=$(SwitchAudioSource -c)
+    echo "$AUDIO_PREV" > .audio-prev-device
+    SwitchAudioSource -s "Multi-Output Device"
+    echo "==> Audio switched to Multi-Output Device (was: $AUDIO_PREV)"
+  fi
+fi
+
 echo "==> Starting Python STT server (ports 8766/8765)..."
 python3 stt_server.py &
 echo $! >> "$PIDFILE"

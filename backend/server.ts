@@ -29,8 +29,10 @@ function usesClaude(): boolean {
 const anthropic = API_KEY ? new Anthropic({ apiKey: API_KEY }) : null;
 
 let ACTIVE_MODEL = process.env.DEFAULT_MODEL ?? 'claude-sonnet-4-6';
+let CODING_LANGUAGE = process.env.DEFAULT_CODING_LANGUAGE ?? 'TypeScript';
 
-const SYSTEM_PROMPT = `You are a real-time interview assistant helping a software developer candidate during a technical job interview.
+function buildSystemPrompt(): string {
+  return `You are a real-time interview assistant helping a software developer candidate during a technical job interview.
 
 You receive:
 1. The full conversation transcript so far (INTERVIEWER and CANDIDATE turns)
@@ -40,11 +42,15 @@ You receive:
 Your job:
 - Answer CONCISELY and PRACTICALLY — the candidate needs to understand in seconds, not minutes
 - Match the language of the conversation (Hungarian → Hungarian, English → English)
-- For coding questions: provide working code immediately, explain briefly after
+- For coding questions: ALWAYS use ${CODING_LANGUAGE} — never use another language unless explicitly asked
+- Prefer the SIMPLEST correct solution — no over-engineering, no unnecessary abstractions, no verbose comments explaining obvious steps
+- Use idiomatic ${CODING_LANGUAGE} (built-in methods, one-liners where natural)
+- For live coding tasks: first 1 sentence explaining your approach/thinking, then the code, then 1 sentence why it works — the interviewer expects to hear the reasoning
 - For system design questions: give a 3-5 bullet structure, not paragraphs
 - For behavioral questions: give 1-2 sentence talking points
 - NEVER pad with "Great question!" or meta-commentary — just the answer
-- If a screenshot shows code: identify the problem or task, solve it`;
+- If a screenshot shows code: identify the problem or task, solve it in ${CODING_LANGUAGE}`;
+}
 
 interface TranscriptEntry {
   speaker: string;
@@ -86,7 +92,7 @@ async function askClaudeStream(
   const stream = anthropic.messages.stream({
     model: ACTIVE_MODEL,
     max_tokens: 1024,
-    system: SYSTEM_PROMPT,
+    system: buildSystemPrompt(),
     messages: [{ role: 'user', content: userContent }],
   });
 
@@ -118,7 +124,7 @@ async function askClaude(prompt: string, transcript: TranscriptEntry[], imageBas
   const response = await anthropic.messages.create({
     model: ACTIVE_MODEL,
     max_tokens: 1024,
-    system: SYSTEM_PROMPT,
+    system: buildSystemPrompt(),
     messages: [{ role: 'user', content: userContent }],
   });
 
@@ -303,6 +309,20 @@ app.post('/language', async (req: Request, res: Response) => {
     await axios.post('http://localhost:8766/language', { language });
   } catch {}
   res.json({ ok: true, language });
+});
+
+app.get('/coding-language', (_req: Request, res: Response) => {
+  res.json({ codingLanguage: CODING_LANGUAGE });
+});
+
+app.post('/coding-language', (req: Request, res: Response) => {
+  const { codingLanguage } = req.body as { codingLanguage: string };
+  if (!codingLanguage) {
+    res.status(400).json({ error: 'codingLanguage required' });
+    return;
+  }
+  CODING_LANGUAGE = codingLanguage;
+  res.json({ ok: true, codingLanguage });
 });
 
 app.listen(5001, () => {
