@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import { Mic, MicOff, Sparkles, Send, Camera, X, ChevronDown, ChevronUp } from 'lucide-react';
-import { useTranscript, TranscriptEntry } from './hooks/useTranscript';
+import { useTranscript } from './hooks/useTranscript';
 import { useAiOverlay } from './hooks/useAiOverlay';
+import type { TranscriptEntry } from './hooks/useAiOverlay';
 import { useAudioRecorder } from './hooks/useAudioRecorder';
 import { useSttStatus } from './hooks/useSttStatus';
 import { ExportButton } from './components/ExportButton';
@@ -30,6 +32,44 @@ function TranscriptList({ entries }: { entries: TranscriptEntry[] }) {
     </div>
   );
 }
+
+const mdComponents: Components = {
+  code({ className, children, ...props }) {
+    const isBlock = className?.startsWith('language-');
+    if (isBlock) {
+      return (
+        <pre className="bg-gray-950 border border-gray-700 rounded-md p-3 my-2 overflow-x-auto">
+          <code className={`text-green-300 text-xs font-mono leading-relaxed ${className ?? ''}`} {...props}>
+            {children}
+          </code>
+        </pre>
+      );
+    }
+    return (
+      <code className="bg-gray-950 text-green-300 text-xs font-mono px-1 py-0.5 rounded" {...props}>
+        {children}
+      </code>
+    );
+  },
+  p({ children }) {
+    return <p className="text-gray-200 text-sm leading-relaxed mb-2">{children}</p>;
+  },
+  ul({ children }) {
+    return <ul className="list-disc list-inside space-y-1 my-2 text-sm text-gray-200">{children}</ul>;
+  },
+  ol({ children }) {
+    return <ol className="list-decimal list-inside space-y-1 my-2 text-sm text-gray-200">{children}</ol>;
+  },
+  li({ children }) {
+    return <li className="text-gray-200 text-sm">{children}</li>;
+  },
+  h1({ children }) { return <h1 className="text-white font-bold text-base mb-2">{children}</h1>; },
+  h2({ children }) { return <h2 className="text-white font-semibold text-sm mb-1 mt-3">{children}</h2>; },
+  h3({ children }) { return <h3 className="text-gray-300 font-semibold text-xs mb-1 mt-2">{children}</h3>; },
+  blockquote({ children }) {
+    return <blockquote className="border-l-2 border-indigo-500 pl-3 my-2 text-gray-400 italic text-sm">{children}</blockquote>;
+  },
+};
 
 function App() {
   const [aiInput, setAiInput] = useState('');
@@ -112,8 +152,9 @@ function App() {
   return (
     <div className="h-screen flex flex-col bg-gray-900 text-white overflow-hidden font-sans select-none">
       {/* Header */}
-      <header className="flex items-center justify-between px-3 py-1.5 bg-gray-800 border-b border-gray-700 shrink-0 drag">
+      <header className="flex items-center justify-between px-3 py-1.5 bg-gray-800 border-b border-gray-700 shrink-0 drag" style={{ cursor: 'move' }}>
         <div className="flex items-center gap-2">
+          <span className="text-gray-600 text-sm select-none">⠿</span>
           <span className="text-xs font-semibold text-gray-300 tracking-wide">Interview</span>
           <div
             title={sttStatus === 'recording' ? 'STT: felvétel' : sttStatus === 'online' ? 'STT: kész' : 'STT: offline'}
@@ -203,8 +244,8 @@ function App() {
                 <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse [animation-delay:300ms]" />
               </div>
             ) : ai.response ? (
-              <div className="prose prose-invert prose-xs max-w-none text-gray-200 text-sm">
-                <ReactMarkdown>{ai.response}</ReactMarkdown>
+              <div className="max-w-none">
+                <ReactMarkdown components={mdComponents}>{ai.response}</ReactMarkdown>
                 {ai.loading && <span className="inline-block w-1 h-3 bg-indigo-400 animate-pulse ml-0.5 align-middle" />}
               </div>
             ) : (
