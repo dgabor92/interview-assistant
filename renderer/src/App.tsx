@@ -43,11 +43,11 @@ function App() {
     });
   }, []);
 
-  // Cmd+Shift+S: screenshot → crop overlay
+  // Cmd+Shift+S: open fullscreen crop overlay window
   useEffect(() => {
     window.electronAPI?.onShortcutSnip(async () => {
-      const base64 = await window.electronAPI?.startCapture({ width: window.innerWidth, height: window.innerHeight });
-      if (base64) crop.openWithScreenshot(base64);
+      const result = await window.electronAPI?.startCropFlow();
+      if (result?.cropped) ai.ask(`Elemezd ezt a képernyőképet: ${result.cropped}`);
     });
   }, []);
 
@@ -75,8 +75,8 @@ function App() {
   };
 
   const handleCropOpen = async () => {
-    const base64 = await captureScreenshot();
-    if (base64) crop.openWithScreenshot(base64);
+    const result = await window.electronAPI?.startCropFlow();
+    if (result?.cropped) ai.ask(`Elemezd ezt a képernyőképet: ${result.cropped}`);
   };
 
   const handleCropConfirm = async () => {

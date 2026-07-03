@@ -20,6 +20,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onAudioRecordingStopped: (callback) =>
     ipcRenderer.on('audio-recording-stopped', callback),
 
+  // Crop flow
+  startCropFlow: () => ipcRenderer.invoke('start-crop-flow'),
+
   // Shortcuts
   onShortcutSnip: (callback) => ipcRenderer.on('shortcut-snip', callback),
   onShortcutAiTrigger: (callback) =>

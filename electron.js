@@ -5,6 +5,7 @@ const {
   globalShortcut,
   desktopCapturer,
   nativeImage,
+  screen,
 } = require('electron');
 const path = require('path');
 const axios = require('axios');
@@ -27,6 +28,38 @@ function createWindow() {
   global.mainWindow = win;
 }
 
+function createCropWindow(onResult) {
+  const { width, height } = screen.getPrimaryDisplay().bounds;
+
+  const cropWin = new BrowserWindow({
+    x: 0, y: 0, width, height,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    movable: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'crop-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  cropWin.loadFile(path.join(__dirname, 'crop.html'));
+  cropWin.setIgnoreMouseEvents(false);
+
+  ipcMain.once('crop-result', (_event, base64) => {
+    cropWin.close();
+    onResult(base64);
+  });
+
+  ipcMain.once('crop-cancel', () => {
+    cropWin.close();
+    onResult(null);
+  });
+}
+
 // --- Text / LLM ---
 ipcMain.on('message', async (event, prompt) => {
   try {
@@ -43,7 +76,7 @@ ipcMain.on('set-opacity', (_event, value) => {
   global.mainWindow?.setOpacity(value);
 });
 
-// --- Screenshot capture ---
+// --- Screenshot capture (full screen, for direct AI use) ---
 ipcMain.handle('capture-area', async (_event, opts = {}) => {
   try {
     const { width = 1920, height = 1080 } = opts;
@@ -59,6 +92,28 @@ ipcMain.handle('capture-area', async (_event, opts = {}) => {
     console.error('Screenshot error:', err);
     return null;
   }
+});
+
+// --- Crop flow: fullscreen overlay window ---
+ipcMain.handle('start-crop-flow', async () => {
+  const { width, height } = screen.getPrimaryDisplay().bounds;
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width, height },
+  });
+  const screenshotBase64 = sources.length > 0 ? sources[0].thumbnail.toDataURL().split(',')[1] : null;
+
+  return new Promise((resolve) => {
+    createCropWindow((croppedBase64) => {
+      resolve(croppedBase64 ? { screenshot: screenshotBase64, cropped: croppedBase64 } : null);
+    });
+
+    ipcMain.once('crop-ready', () => {
+      BrowserWindow.getAllWindows()
+        .find(w => w.webContents.getURL().includes('crop.html'))
+        ?.webContents.send('screenshot', screenshotBase64);
+    });
+  });
 });
 
 // --- Audio: delegate start/stop to Python STT server (sounddevice) ---

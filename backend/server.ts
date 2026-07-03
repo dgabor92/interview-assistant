@@ -32,7 +32,14 @@ type Message = { role: 'user' | 'assistant'; content: string };
 const contextWindow: Message[] = [];
 const MAX_CONTEXT = 10;
 
-const SYSTEM_PROMPT = 'You are an interview assistant. Help the candidate answer technical questions concisely and accurately. When given a screenshot or code snippet, analyze it and provide a clear solution.';
+const SYSTEM_PROMPT = `You are an interview assistant helping a software developer candidate during a technical interview.
+
+Rules:
+- Always respond in the SAME LANGUAGE as the user's message (if Hungarian, respond in Hungarian; if English, in English)
+- When you see a screenshot with code or a coding problem: identify the issue or question, then provide a WORKING CODE SOLUTION with a brief explanation
+- When analyzing a screenshot: describe only what is directly relevant to answering the question
+- Keep answers concise and practical — the candidate needs to understand quickly
+- If you see code: always include a corrected or improved code snippet in your answer`;
 
 async function askClaude(prompt: string): Promise<string> {
   if (!anthropic) throw new Error('No ANTHROPIC_API_KEY set');
