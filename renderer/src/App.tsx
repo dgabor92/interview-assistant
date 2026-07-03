@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Mic, MicOff, Sparkles, Send } from 'lucide-react';
+import { Mic, MicOff, Sparkles, Send, Camera } from 'lucide-react';
 import { useTranscript } from './hooks/useTranscript';
 import { useAiOverlay } from './hooks/useAiOverlay';
 import { useAudioRecorder } from './hooks/useAudioRecorder';
@@ -62,6 +62,13 @@ function App() {
     }
   };
 
+  const handleScreenshot = async () => {
+    const base64 = await window.electronAPI?.startCapture();
+    if (base64) {
+      ai.ask(`Elemezd ezt a képernyőképet: ${base64}`);
+    }
+  };
+
   return (
     <div className="h-screen flex flex-col bg-gray-900 text-white overflow-hidden font-sans">
       {/* Header */}
@@ -88,6 +95,13 @@ function App() {
             className="w-20 accent-indigo-500"
             onChange={(e) => window.electronAPI?.setOpacity(parseFloat(e.target.value))}
           />
+          <button
+            onClick={handleScreenshot}
+            title="Screenshot → AI (⌘⇧S)"
+            className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg transition-colors font-medium bg-gray-700 hover:bg-gray-600 text-gray-200"
+          >
+            <Camera size={13} />
+          </button>
           <ExportButton
             interviewer={interviewerEntries}
             candidate={candidateEntries}
