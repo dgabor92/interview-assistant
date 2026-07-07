@@ -1,6 +1,6 @@
 # Interview Assistant
 
-A real-time interview overlay — listens to both your microphone and system audio, transcribes with Whisper, and gives instant AI (Claude or local Ollama) answers. The window is invisible in screen shares and recordings.
+A real-time interview overlay — listens to both your microphone and system audio, transcribes with Whisper, and gives instant AI (Claude or local Ollama) answers. The window is visible to you on your desktop, but invisible to others in screen shares and recordings (macOS content protection).
 
 ## How it works
 

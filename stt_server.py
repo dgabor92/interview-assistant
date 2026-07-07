@@ -52,15 +52,12 @@ buffer_lock = threading.Lock()
 ws_clients: set = set()
 ws_loop: asyncio.AbstractEventLoop | None = None
 
-current_speaker = 'Speaker 1'
-last_rms_history: deque[float] = deque(maxlen=10)
 recording = False
 stream: sd.InputStream | None = None
 
 SAMPLE_RATE = 16000
 CHUNK_SECONDS = 1.5
 SILENCE_RMS_THRESHOLD = 0.01
-SPEAKER_CHANGE_RMS_RATIO = 2.5
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +135,7 @@ def audio_callback(indata: np.ndarray, frames: int, time, status):
 
 
 def process_loop():
-    global current_speaker, WHISPER_LANGUAGE
+    global WHISPER_LANGUAGE
     target_samples = SAMPLE_RATE * CHUNK_SECONDS
 
     while True:
@@ -161,21 +158,11 @@ def process_loop():
             threading.Event().wait(0.1)
             continue
 
-        # Speaker change: significant RMS shift from recent history
-        if last_rms_history:
-            avg_prev = float(np.mean(list(last_rms_history)))
-            if avg_prev > 0 and (
-                rms / avg_prev > SPEAKER_CHANGE_RMS_RATIO
-                or avg_prev / rms > SPEAKER_CHANGE_RMS_RATIO
-            ):
-                current_speaker = 'Speaker 2' if current_speaker == 'Speaker 1' else 'Speaker 1'
-        last_rms_history.append(rms)
-
         segments, _ = model.transcribe(audio_np, beam_size=1, language=WHISPER_LANGUAGE)
         for seg in segments:
             text = seg.text.strip()
             if text:
-                send_transcript(current_speaker, text)
+                send_transcript('Speaker 2', text)
 
         threading.Event().wait(0.05)
 
